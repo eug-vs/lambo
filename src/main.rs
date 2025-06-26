@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::{fmt::Display, iter::Peekable};
 
 #[derive(Debug, Clone)]
 enum Expr {
@@ -28,29 +28,57 @@ impl Display for Expr {
 
 impl Expr {
     fn from_str(s: &str) -> Self {
-        let result = Self::from_chars(&mut s.chars());
-        assert_eq!(format!("{}", result), s);
-        result
+        Self::from_chars(&mut s.chars().peekable())
     }
-    fn from_chars<I: Iterator<Item = char>>(iterator: &mut I) -> Self {
-        match iterator.next().unwrap() {
+    fn variable_name_from_chars<I: Iterator<Item = char>>(iterator: &mut Peekable<I>) -> String {
+        let mut chars = vec![];
+        loop {
+            match iterator.peek().unwrap() {
+                ' ' | '(' | ')' | '.' => break,
+                char => chars.push(*char),
+            }
+            iterator.next().unwrap();
+        }
+        chars.iter().collect::<String>()
+    }
+    fn consume_whitespace<I: Iterator<Item = char>>(iterator: &mut Peekable<I>) {
+        loop {
+            match iterator.peek().unwrap() {
+                ' ' | '\n' => {}
+                _ => break,
+            }
+            iterator.next();
+        }
+    }
+    fn from_chars<I: Iterator<Item = char>>(iterator: &mut Peekable<I>) -> Self {
+        Self::consume_whitespace(iterator);
+        match iterator.peek().unwrap() {
             '(' => {
+                iterator.next().unwrap();
+
+                Self::consume_whitespace(iterator);
+
                 let func = Self::from_chars(iterator);
-                let space = iterator.next().unwrap();
-                assert_eq!(space, ' ');
+
+                Self::consume_whitespace(iterator);
+
                 let arg = Self::from_chars(iterator);
+
+                Self::consume_whitespace(iterator);
+
                 let paren = iterator.next().unwrap();
                 assert_eq!(paren, ')');
                 Expr::Call(Box::new(func), Box::new(arg))
             }
-            'λ' => {
-                let var = iterator.next().unwrap();
+            'λ' | '@' => {
+                iterator.next().unwrap();
+                let var = Self::variable_name_from_chars(iterator);
                 let dot = iterator.next().unwrap();
                 assert_eq!(dot, '.');
                 let body = Self::from_chars(iterator);
-                Expr::Lambda(String::from(var), Box::new(body))
+                Expr::Lambda(var, Box::new(body))
             }
-            c => Expr::Var(String::from(c)),
+            _ => Expr::Var(Self::variable_name_from_chars(iterator)),
         }
     }
     fn evaluate(&self) -> Self {
@@ -100,6 +128,6 @@ fn main() {
     let t = Expr::from_str("((λx.λy.x a) b)");
     println!("{}", t.evaluate());
 
-    let t2 = Expr::from_str("(λt.((t a) b) λx.λy.x)");
+    let t2 = Expr::from_str("(λtrue.((true a) b) λx.λy.x)");
     println!("{}", t2.evaluate());
 }
