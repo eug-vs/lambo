@@ -33,9 +33,12 @@ impl Expr {
     fn variable_name_from_chars<I: Iterator<Item = char>>(iterator: &mut Peekable<I>) -> String {
         let mut chars = vec![];
         loop {
-            match iterator.peek().unwrap() {
-                ' ' | '(' | ')' | '.' => break,
-                char => chars.push(*char),
+            match iterator.peek() {
+                Some(char) => match char {
+                    ' ' | '(' | ')' | '.' => break,
+                    c => chars.push(*c),
+                },
+                None => break,
             }
             iterator.next().unwrap();
         }
@@ -49,6 +52,17 @@ impl Expr {
             }
             iterator.next();
         }
+    }
+
+    /// Just a semantic sugar on top of existing lambda syntax
+    fn provide_variable(&self, variable_name: &str, value: Expr) -> Self {
+        Self::Call(
+            Box::new(Self::Lambda(
+                String::from(variable_name),
+                Box::new(self.clone()),
+            )),
+            Box::new(value),
+        )
     }
     fn from_chars<I: Iterator<Item = char>>(iterator: &mut Peekable<I>) -> Self {
         Self::consume_whitespace(iterator);
@@ -125,9 +139,9 @@ fn main() {
     let e = Expr::from_str("(λx.y a)");
     println!("{}", e.evaluate());
 
-    let t = Expr::from_str("((λx.λy.x a) b)");
-    println!("{}", t.evaluate());
-
-    let t2 = Expr::from_str("(λtrue.((true a) b) λx.λy.x)");
+    let t2 = Expr::from_str("((and true) false)")
+        .provide_variable("true", Expr::from_str("λx.λy.x"))
+        .provide_variable("false", Expr::from_str("λa.λb.b"))
+        .provide_variable("and", Expr::from_str("λp.λq.((p q) p)"));
     println!("{}", t2.evaluate());
 }
