@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Display, iter::Peekable};
+use std::{collections::HashMap, fmt::Display, fs, iter::Peekable};
 
 #[derive(Debug, Clone)]
 enum VariableKind {
@@ -93,7 +93,7 @@ impl Expr {
         loop {
             match iterator.peek() {
                 Some(char) => match char {
-                    ' ' | '(' | ')' | '.' => break,
+                    ' ' | '(' | ')' | '.' | '@' | 'λ' => break,
                     c => chars.push(*c),
                 },
                 None => break,
@@ -177,7 +177,7 @@ impl Expr {
                     // Special case for OnE AnD oNlY built-in beta-equivalence operator
                     Expr::Call(operator, right) => {
                         if !match operator.evaluate() {
-                            Expr::Var(var) => var.name == String::from("="),
+                            Expr::Var(var) => var.name == String::from("#eq"),
                             _ => false,
                         } {
                             return self.clone();
@@ -197,7 +197,7 @@ impl Expr {
         };
         let new_str = format!("{}", result);
         if previous_str != new_str {
-            println!("Evaluated: {} => {}", self, result);
+            // println!("Evaluated: {} => {}", self, result);
         }
         result
     }
@@ -244,29 +244,50 @@ impl Expr {
     }
 }
 
+fn extract_from_markdown() -> Vec<String> {
+    let input = fs::read_to_string("./README.md").unwrap();
+    let mut lines = Vec::new();
+    let mut in_code_block = false;
+
+    for line in input.lines() {
+        if line.trim_start().starts_with("```") {
+            in_code_block = !in_code_block;
+            continue;
+        }
+        if in_code_block {
+            lines.push(line.to_string());
+        }
+    }
+
+    lines
+}
+
 fn main() {
-    let mut stdlib = HashMap::<String, Expr>::new();
-    stdlib.insert("true".to_string(), Expr::TRUE());
-    stdlib.insert("false".to_string(), Expr::FALSE());
-    stdlib.insert("and".to_string(), Expr::from_str("λp.λq.((p q) p)"));
-    stdlib.insert(
-        "Y".to_string(),
-        Expr::from_str("@f.( (@x.(f (x x))) (@x.(f (x x))) )"),
-    );
+    let mut context = HashMap::<String, Expr>::new();
 
-    assert!(Expr::TRUE() == Expr::TRUE());
-
-    let e = Expr::if_then_else(
-        Expr::from_str("true"),
-        Expr::from_str("true"),
-        Expr::from_str("false"),
-    );
-    println!("{e}");
-    println!("{}", e.evaluate_scoped(&stdlib));
-
-    let t2 = Expr::from_str("((and true) false)");
-    println!("{}", t2.evaluate_scoped(&stdlib));
-
-    let y_combinator_test = Expr::from_str("(Y F)");
-    println!("{}", y_combinator_test.evaluate_scoped(&stdlib));
+    for line in extract_from_markdown()
+        .iter()
+        .filter(|line| !line.starts_with("//") && line.len() > 0)
+    {
+        let mut words = line.split(&[' ', '\t']);
+        match words.next().unwrap() {
+            "eval" => {
+                let expr = Expr::from_str(&words.collect::<Vec<_>>().join(" "));
+                println!("{}\n => {}", expr, expr.evaluate_scoped(&context))
+            }
+            "let" => {
+                let variable_name = words.next().unwrap();
+                let expr = Expr::from_str(&words.collect::<Vec<_>>().join(" "));
+                context.insert(variable_name.to_string(), expr);
+            }
+            "assert" => {
+                let remaining = words.collect::<Vec<_>>().join(" ");
+                let mut chars = remaining.chars().peekable();
+                let left = Expr::from_chars(&mut chars).evaluate_scoped(&context);
+                let right = Expr::from_chars(&mut chars).evaluate_scoped(&context);
+                assert_eq!(left, right);
+            }
+            _ => panic!("Invalid syntax"),
+        }
+    }
 }
