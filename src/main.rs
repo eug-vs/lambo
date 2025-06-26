@@ -1,8 +1,36 @@
 use std::{fmt::Display, iter::Peekable};
 
 #[derive(Debug, Clone)]
+enum VariableKind {
+    /// Represents a De Brujin index
+    Bound(usize),
+    Free,
+}
+
+#[derive(Debug, Clone)]
+struct Variable {
+    name: String,
+    kind: VariableKind,
+}
+
+impl Display for Variable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.name)
+    }
+}
+
+// impl Debug for Variable {
+//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+//         match self.kind {
+//             VariableKind::Free => write!(f, "{}", self.name),
+//             VariableKind::Bound(depth) => write!(f, "{}_{}", self.name, depth),
+//         }
+//     }
+// }
+
+#[derive(Debug, Clone)]
 enum Expr {
-    Var(String),
+    Var(Variable),
     Lambda(String, Box<Expr>),
     Call(Box<Expr>, Box<Expr>),
 }
@@ -23,6 +51,23 @@ impl Display for Expr {
                 write!(f, ")")
             }
         }
+    }
+}
+
+impl Expr {
+    #[allow(non_snake_case)]
+    fn TRUE() -> Expr {
+        Expr::from_str("λx.λy.x")
+    }
+    #[allow(non_snake_case)]
+    fn FALSE() -> Expr {
+        Expr::from_str("λx.λy.y")
+    }
+    fn if_then_else(condition: Expr, then: Expr, r#else: Expr) -> Expr {
+        Expr::from_str("(( condition then ) else )")
+            .provide_variable("condition", condition)
+            .provide_variable("then", then)
+            .provide_variable("else", r#else)
     }
 }
 
@@ -56,15 +101,16 @@ impl Expr {
 
     /// Just a semantic sugar on top of existing lambda syntax
     fn provide_variable(&self, variable_name: &str, value: Expr) -> Self {
-        Self::Call(
-            Box::new(Self::Lambda(
-                String::from(variable_name),
-                Box::new(self.clone()),
-            )),
-            Box::new(value),
-        )
+        Self::from_str(format!("( @{variable_name}.{self} {value})").as_str())
     }
     fn from_chars<I: Iterator<Item = char>>(iterator: &mut Peekable<I>) -> Self {
+        let ctx = vec![];
+        Self::from_chars_inner(iterator, ctx)
+    }
+    fn from_chars_inner<I: Iterator<Item = char>>(
+        iterator: &mut Peekable<I>,
+        mut ctx: Vec<String>,
+    ) -> Self {
         Self::consume_whitespace(iterator);
         match iterator.peek().unwrap() {
             '(' => {
@@ -72,11 +118,11 @@ impl Expr {
 
                 Self::consume_whitespace(iterator);
 
-                let func = Self::from_chars(iterator);
+                let func = Self::from_chars_inner(iterator, ctx.clone());
 
                 Self::consume_whitespace(iterator);
 
-                let arg = Self::from_chars(iterator);
+                let arg = Self::from_chars_inner(iterator, ctx);
 
                 Self::consume_whitespace(iterator);
 
@@ -87,61 +133,87 @@ impl Expr {
             'λ' | '@' => {
                 iterator.next().unwrap();
                 let var = Self::variable_name_from_chars(iterator);
+                ctx.push(var.clone());
+
                 let dot = iterator.next().unwrap();
                 assert_eq!(dot, '.');
-                let body = Self::from_chars(iterator);
+
+                let body = Self::from_chars_inner(iterator, ctx);
                 Expr::Lambda(var, Box::new(body))
             }
-            _ => Expr::Var(Self::variable_name_from_chars(iterator)),
+            _ => {
+                let name = Self::variable_name_from_chars(iterator);
+                let kind = match ctx.iter().rev().position(|n| *n == name) {
+                    Some(depth) => VariableKind::Bound(depth + 1), // Just to avoid 0, purely sugar
+                    None => VariableKind::Free,
+                };
+                Expr::Var(Variable { name, kind })
+            }
         }
     }
+
     fn evaluate(&self) -> Self {
-        println!("Evaluate     : {}", self);
+        let previous_str = format!("{}", self);
         let result = match self {
-            Expr::Call(function, argument) => match (**function).evaluate() {
-                Expr::Lambda(arg, body) => body.beta_reduce(arg, argument).evaluate(),
-                _ => self.clone(),
-            },
-            expr => expr.clone(),
-        };
-        println!("Evaluate done: {} => {}", self, result);
-        result
-    }
-    fn beta_reduce(&self, variable: String, replace_with: &Expr) -> Expr {
-        match self {
-            Expr::Var(var) => {
-                if *var == variable {
-                    replace_with.clone()
-                } else {
-                    Expr::Var(var.clone())
+            Expr::Call(function, argument) => {
+                let evaluated_argument = argument.evaluate();
+                match function.evaluate() {
+                    Expr::Lambda(_arg, body) => body.beta_reduce(&evaluated_argument, 1).evaluate(), // We start from 1 (see above)
+                    _ => self.clone(),
                 }
             }
-            Expr::Lambda(arg, body) => {
-                assert_ne!(
-                    *arg, variable,
-                    "Variable name clash! Variable: {}, expression: {}",
-                    variable, self
-                );
-                Expr::Lambda(
-                    arg.clone(),
-                    Box::new(body.beta_reduce(variable, replace_with)),
-                )
+            expr => expr.clone(),
+        };
+        let new_str = format!("{}", result);
+        if previous_str != new_str {
+            println!("Evaluated: {} => {}", self, result);
+        }
+        result
+    }
+    fn beta_reduce(&self, replace_with: &Expr, depth: usize) -> Expr {
+        match self {
+            Expr::Var(var) => match var.kind {
+                VariableKind::Bound(d) => {
+                    if d == depth {
+                        replace_with.clone()
+                    } else {
+                        self.clone()
+                    }
+                }
+                _ => self.clone(),
+            },
+            Expr::Lambda(arg_name, body) => {
+                let new_body = body.beta_reduce(replace_with, depth + 1);
+                Self::Lambda(arg_name.clone(), Box::new(new_body))
             }
-            Expr::Call(func, arg) => Expr::Call(
-                Box::new(func.beta_reduce(variable.clone(), replace_with)),
-                Box::new(arg.beta_reduce(variable, replace_with)),
-            ),
+            Expr::Call(func, arg) => {
+                let new_func = func.beta_reduce(replace_with, depth);
+                let new_arg = arg.beta_reduce(replace_with, depth);
+                Self::Call(Box::new(new_func), Box::new(new_arg))
+            }
+            _ => todo!(),
         }
     }
 }
 
 fn main() {
-    let e = Expr::from_str("(λx.y a)");
+    println!("TRUE: {}", Expr::TRUE());
+    println!("FALSE: {}", Expr::FALSE());
+
+    let test = Expr::from_str("( ( @x.@y.(x z)  @y.y ) wtf)");
+    println!("{}", test);
+    println!("{}", test.evaluate());
+
+    let e = Expr::if_then_else(Expr::TRUE(), Expr::TRUE(), Expr::FALSE());
+    println!("{e}");
     println!("{}", e.evaluate());
 
     let t2 = Expr::from_str("((and true) false)")
-        .provide_variable("true", Expr::from_str("λx.λy.x"))
-        .provide_variable("false", Expr::from_str("λa.λb.b"))
+        .provide_variable("true", Expr::TRUE())
+        .provide_variable("false", Expr::FALSE())
         .provide_variable("and", Expr::from_str("λp.λq.((p q) p)"));
     println!("{}", t2.evaluate());
+
+    let y_combinator = Expr::from_str("@f.( (@x.(f (x x))) (@x.(f (x x))) )");
+    println!("{}", y_combinator.evaluate());
 }
