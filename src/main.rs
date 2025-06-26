@@ -171,7 +171,25 @@ impl Expr {
             Expr::Call(function, argument) => {
                 let evaluated_argument = argument.evaluate();
                 match function.evaluate() {
-                    Expr::Lambda(_arg, body) => body.beta_reduce(&evaluated_argument, 1).evaluate(), // We start from 1 (see above)
+                    Expr::Lambda(_arg, body) => {
+                        body.beta_reduce(&evaluated_argument, 1).evaluate() // We start from 1 (see above)
+                    }
+                    // Special case for OnE AnD oNlY built-in beta-equivalence operator
+                    Expr::Call(operator, right) => {
+                        if !match operator.evaluate() {
+                            Expr::Var(var) => var.name == String::from("="),
+                            _ => false,
+                        } {
+                            return self.clone();
+                        }
+
+                        // Evaluate both and check alpha-equivalence
+                        if right.evaluate() == evaluated_argument {
+                            Self::TRUE()
+                        } else {
+                            Self::FALSE()
+                        }
+                    }
                     _ => self.clone(), // Maybe beta reduce here as well?
                 }
             }
@@ -207,6 +225,7 @@ impl Expr {
         }
     }
     fn evaluate_scoped(&self, context: &HashMap<String, Expr>) -> Expr {
+        // TODO: only include functions from context that are actually used
         let expr = context.iter().fold(self.clone(), |acc, (name, value)| {
             acc.provide_variable(name, value.clone())
         });
