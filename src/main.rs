@@ -1,4 +1,4 @@
-use std::{fmt::Display, iter::Peekable};
+use std::{collections::HashMap, fmt::Display, iter::Peekable};
 
 #[derive(Debug, Clone)]
 enum VariableKind {
@@ -18,15 +18,6 @@ impl Display for Variable {
         write!(f, "{}", self.name)
     }
 }
-
-// impl Debug for Variable {
-//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//         match self.kind {
-//             VariableKind::Free => write!(f, "{}", self.name),
-//             VariableKind::Bound(depth) => write!(f, "{}_{}", self.name, depth),
-//         }
-//     }
-// }
 
 #[derive(Debug, Clone)]
 enum Expr {
@@ -53,6 +44,22 @@ impl Display for Expr {
         }
     }
 }
+impl Expr {
+    fn fmt_de_brujin(&self) -> String {
+        match self {
+            Expr::Var(variable) => match variable.kind {
+                VariableKind::Free => format!("{}", variable.name),
+                VariableKind::Bound(depth) => format!("{}", depth),
+            },
+            Expr::Lambda(_argument, body) => format!("λ {}", body.fmt_de_brujin()),
+            Expr::Call(function, argument) => format!(
+                "({} {})",
+                function.fmt_de_brujin(),
+                argument.fmt_de_brujin()
+            ),
+        }
+    }
+}
 
 impl Expr {
     #[allow(non_snake_case)]
@@ -68,6 +75,12 @@ impl Expr {
             .provide_variable("condition", condition)
             .provide_variable("then", then)
             .provide_variable("else", r#else)
+    }
+}
+
+impl PartialEq for Expr {
+    fn eq(&self, other: &Self) -> bool {
+        self.fmt_de_brujin() == other.fmt_de_brujin()
     }
 }
 
@@ -159,7 +172,7 @@ impl Expr {
                 let evaluated_argument = argument.evaluate();
                 match function.evaluate() {
                     Expr::Lambda(_arg, body) => body.beta_reduce(&evaluated_argument, 1).evaluate(), // We start from 1 (see above)
-                    _ => self.clone(),
+                    _ => self.clone(), // Maybe beta reduce here as well?
                 }
             }
             expr => expr.clone(),
@@ -191,29 +204,50 @@ impl Expr {
                 let new_arg = arg.beta_reduce(replace_with, depth);
                 Self::Call(Box::new(new_func), Box::new(new_arg))
             }
-            _ => todo!(),
         }
+    }
+    fn evaluate_scoped(&self, context: &HashMap<String, Expr>) -> Expr {
+        let expr = context.iter().fold(self.clone(), |acc, (name, value)| {
+            acc.provide_variable(name, value.clone())
+        });
+        expr.evaluate().replace_from_context(&context)
+    }
+    fn replace_from_context(&self, context: &HashMap<String, Expr>) -> Expr {
+        for (name, value) in context {
+            if value == self {
+                return Expr::Var(Variable {
+                    name: name.clone(),
+                    kind: VariableKind::Free,
+                });
+            }
+        }
+        self.clone() // TODO: recursively replace_from_context further down
     }
 }
 
 fn main() {
-    println!("TRUE: {}", Expr::TRUE());
-    println!("FALSE: {}", Expr::FALSE());
+    let mut stdlib = HashMap::<String, Expr>::new();
+    stdlib.insert("true".to_string(), Expr::TRUE());
+    stdlib.insert("false".to_string(), Expr::FALSE());
+    stdlib.insert("and".to_string(), Expr::from_str("λp.λq.((p q) p)"));
+    stdlib.insert(
+        "Y".to_string(),
+        Expr::from_str("@f.( (@x.(f (x x))) (@x.(f (x x))) )"),
+    );
 
-    let test = Expr::from_str("( ( @x.@y.(x z)  @y.y ) wtf)");
-    println!("{}", test);
-    println!("{}", test.evaluate());
+    assert!(Expr::TRUE() == Expr::TRUE());
 
-    let e = Expr::if_then_else(Expr::TRUE(), Expr::TRUE(), Expr::FALSE());
+    let e = Expr::if_then_else(
+        Expr::from_str("true"),
+        Expr::from_str("true"),
+        Expr::from_str("false"),
+    );
     println!("{e}");
-    println!("{}", e.evaluate());
+    println!("{}", e.evaluate_scoped(&stdlib));
 
-    let t2 = Expr::from_str("((and true) false)")
-        .provide_variable("true", Expr::TRUE())
-        .provide_variable("false", Expr::FALSE())
-        .provide_variable("and", Expr::from_str("λp.λq.((p q) p)"));
-    println!("{}", t2.evaluate());
+    let t2 = Expr::from_str("((and true) false)");
+    println!("{}", t2.evaluate_scoped(&stdlib));
 
-    let y_combinator = Expr::from_str("@f.( (@x.(f (x x))) (@x.(f (x x))) )");
-    println!("{}", y_combinator.evaluate());
+    let y_combinator_test = Expr::from_str("(Y F)");
+    println!("{}", y_combinator_test.evaluate_scoped(&stdlib));
 }
