@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Display, fs, iter::Peekable};
+use std::{fmt::Display, fs, iter::Peekable};
 
 #[derive(Debug, Clone)]
 enum VariableKind {
