@@ -70,15 +70,10 @@ impl Expr {
     fn FALSE() -> Expr {
         Expr::from_str("λx.λy.y")
     }
-    fn if_then_else(condition: Expr, then: Expr, r#else: Expr) -> Expr {
-        Expr::from_str("(( condition then ) else )")
-            .provide_variable("condition", condition)
-            .provide_variable("then", then)
-            .provide_variable("else", r#else)
-    }
 }
 
 impl PartialEq for Expr {
+    /// Alpha equivalence
     fn eq(&self, other: &Self) -> bool {
         self.fmt_de_brujin() == other.fmt_de_brujin()
     }
@@ -164,49 +159,17 @@ impl Expr {
             }
         }
     }
-
-    fn evaluate(&self) -> Self {
-        let previous_str = format!("{}", self);
-        let result = match self {
-            Expr::Call(function, argument) => {
-                let evaluated_argument = argument.evaluate();
-                match function.evaluate() {
-                    Expr::Lambda(_arg, body) => {
-                        body.beta_reduce(&evaluated_argument, 1).evaluate() // We start from 1 (see above)
-                    }
-                    // Special case for OnE AnD oNlY built-in beta-equivalence operator
-                    Expr::Call(operator, right) => {
-                        if !match operator.evaluate() {
-                            Expr::Var(var) => var.name == String::from("#eq"),
-                            _ => false,
-                        } {
-                            return self.clone();
-                        }
-
-                        // Evaluate both and check alpha-equivalence
-                        if right.evaluate() == evaluated_argument {
-                            Self::TRUE()
-                        } else {
-                            Self::FALSE()
-                        }
-                    }
-                    _ => self.clone(), // Maybe beta reduce here as well?
-                }
-            }
-            expr => expr.clone(),
-        };
-        let new_str = format!("{}", result);
-        if previous_str != new_str {
-            // println!("Evaluated: {} => {}", self, result);
-        }
-        result
-    }
-    fn beta_reduce(&self, replace_with: &Expr, depth: usize) -> Expr {
+    /// Performs an adjustment to variables' depths.
+    /// Always call with `cutoff=1` initially
+    fn adjust_depth(&self, cutoff: usize, by: isize) -> Expr {
         match self {
             Expr::Var(var) => match var.kind {
                 VariableKind::Bound(d) => {
-                    if d == depth {
-                        replace_with.clone()
+                    if d >= cutoff {
+                        Expr::Var(Variable {
+                            name: var.name.clone(),
+                            kind: VariableKind::Bound(((d as isize) + by) as usize),
+                        })
                     } else {
                         self.clone()
                     }
@@ -214,12 +177,77 @@ impl Expr {
                 _ => self.clone(),
             },
             Expr::Lambda(arg_name, body) => {
-                let new_body = body.beta_reduce(replace_with, depth + 1);
+                let adjusted_body = body.adjust_depth(cutoff + 1, by);
+                Expr::Lambda(arg_name.clone(), Box::new(adjusted_body))
+            }
+            Expr::Call(func, arg) => {
+                let adjusted_func = func.adjust_depth(cutoff, by);
+                let adjusted_arg = arg.adjust_depth(cutoff, by);
+                Expr::Call(Box::new(adjusted_func), Box::new(adjusted_arg))
+            }
+        }
+    }
+
+    fn evaluate(&self) -> Self {
+        match self {
+            Expr::Call(function, argument) => {
+                let evaluated_argument = argument.evaluate();
+                let evaluated_function = function.evaluate();
+
+                match evaluated_function.clone() {
+                    Expr::Lambda(_arg, body) => {
+                        // We start from 1 (see above)
+                        return body
+                            .substitute(&evaluated_argument.adjust_depth(1, 1), 1)
+                            .adjust_depth(1, -1)
+                            .evaluate();
+                    }
+                    // Special case for OnE AnD oNlY built-in beta-equivalence operator
+                    Expr::Call(operator, right) => {
+                        match operator.evaluate() {
+                            Expr::Var(var) => {
+                                if var.name == String::from("#eq") {
+                                    // Evaluate both and check alpha-equivalence
+                                    if right.evaluate() == evaluated_argument {
+                                        return Self::TRUE();
+                                    } else {
+                                        return Self::FALSE();
+                                    }
+                                }
+                            }
+                            _ => {}
+                        };
+                    }
+                    _ => {}
+                };
+                Expr::Call(Box::new(evaluated_function), Box::new(evaluated_argument))
+            }
+            Expr::Lambda(name, body) => {
+                let evaluated_body = body.evaluate();
+                Self::Lambda(name.clone(), Box::new(evaluated_body))
+            }
+            expr => expr.clone(),
+        }
+    }
+    fn substitute(&self, with: &Expr, at_depth: usize) -> Expr {
+        match self {
+            Expr::Var(var) => match var.kind {
+                VariableKind::Bound(d) => {
+                    if d == at_depth {
+                        with.clone()
+                    } else {
+                        self.clone()
+                    }
+                }
+                _ => self.clone(),
+            },
+            Expr::Lambda(arg_name, body) => {
+                let new_body = body.substitute(&with.adjust_depth(1, 1), at_depth + 1);
                 Self::Lambda(arg_name.clone(), Box::new(new_body))
             }
             Expr::Call(func, arg) => {
-                let new_func = func.beta_reduce(replace_with, depth);
-                let new_arg = arg.beta_reduce(replace_with, depth);
+                let new_func = func.substitute(with, at_depth);
+                let new_arg = arg.substitute(with, at_depth);
                 Self::Call(Box::new(new_func), Box::new(new_arg))
             }
         }
