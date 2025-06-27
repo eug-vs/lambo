@@ -1,4 +1,9 @@
-use std::{fmt::Display, fs, iter::Peekable};
+use std::{
+    fmt::Display,
+    fs,
+    io::{Write, stdout},
+};
+mod parser;
 
 #[derive(Debug, Clone)]
 enum VariableKind {
@@ -36,8 +41,18 @@ impl Display for Expr {
             }
             Expr::Call(function, argument) => {
                 write!(f, "(")?;
-                function.fmt(f)?;
+                match **function {
+                    Expr::Lambda(_, _) => {
+                        write!(f, "(")?;
+                        function.fmt(f)?;
+                        write!(f, ")")?;
+                    }
+                    _ => function.fmt(f)?,
+                }
                 write!(f, " ")?;
+
+                // We can avoid wrapping argument in (),
+                // even if it's a Lambda, because closing paren follows anyway
                 argument.fmt(f)?;
                 write!(f, ")")
             }
@@ -80,84 +95,10 @@ impl PartialEq for Expr {
 }
 
 impl Expr {
-    fn from_str(s: &str) -> Self {
-        Self::from_chars(&mut s.chars().peekable())
-    }
-    fn variable_name_from_chars<I: Iterator<Item = char>>(iterator: &mut Peekable<I>) -> String {
-        let mut chars = vec![];
-        loop {
-            match iterator.peek() {
-                Some(char) => match char {
-                    ' ' | '(' | ')' | '.' | '@' | 'λ' => break,
-                    c => chars.push(*c),
-                },
-                None => break,
-            }
-            iterator.next().unwrap();
-        }
-        chars.iter().collect::<String>()
-    }
-    fn consume_whitespace<I: Iterator<Item = char>>(iterator: &mut Peekable<I>) {
-        loop {
-            match iterator.peek().unwrap() {
-                ' ' | '\n' => {}
-                _ => break,
-            }
-            iterator.next();
-        }
-    }
-
     /// Just a semantic sugar on top of existing lambda syntax
     fn provide_variable(&self, variable_name: &str, value: Expr) -> Self {
-        Self::from_str(format!("( @{variable_name}.{self} {value})").as_str())
-    }
-    fn from_chars<I: Iterator<Item = char>>(iterator: &mut Peekable<I>) -> Self {
-        let ctx = vec![];
-        Self::from_chars_inner(iterator, ctx)
-    }
-    fn from_chars_inner<I: Iterator<Item = char>>(
-        iterator: &mut Peekable<I>,
-        mut ctx: Vec<String>,
-    ) -> Self {
-        Self::consume_whitespace(iterator);
-        match iterator.peek().unwrap() {
-            '(' => {
-                iterator.next().unwrap();
-
-                Self::consume_whitespace(iterator);
-
-                let func = Self::from_chars_inner(iterator, ctx.clone());
-
-                Self::consume_whitespace(iterator);
-
-                let arg = Self::from_chars_inner(iterator, ctx);
-
-                Self::consume_whitespace(iterator);
-
-                let paren = iterator.next().unwrap();
-                assert_eq!(paren, ')');
-                Expr::Call(Box::new(func), Box::new(arg))
-            }
-            'λ' | '@' => {
-                iterator.next().unwrap();
-                let var = Self::variable_name_from_chars(iterator);
-                ctx.push(var.clone());
-
-                let dot = iterator.next().unwrap();
-                assert_eq!(dot, '.');
-
-                let body = Self::from_chars_inner(iterator, ctx);
-                Expr::Lambda(var, Box::new(body))
-            }
-            _ => {
-                let name = Self::variable_name_from_chars(iterator);
-                let kind = match ctx.iter().rev().position(|n| *n == name) {
-                    Some(depth) => VariableKind::Bound(depth + 1), // Just to avoid 0, purely sugar
-                    None => VariableKind::Free,
-                };
-                Expr::Var(Variable { name, kind })
-            }
-        }
+        let formatted = format!("(@{variable_name}.{self}) {value}");
+        Self::from_str(&formatted)
     }
     /// Performs an adjustment to variables' depths.
     /// Always call with `cutoff=1` initially
@@ -188,11 +129,39 @@ impl Expr {
         }
     }
 
+    fn handle_builtin_functions(function: &Expr, argument: &Expr) -> Option<Expr> {
+        match function {
+            // Beta-equivalence operator: #eq
+            Expr::Call(operator, right) => {
+                match operator.evaluate() {
+                    Expr::Var(var) => {
+                        if var.name == String::from("#eq") {
+                            // Evaluate both and check alpha-equivalence
+                            if right.evaluate() == *argument {
+                                return Some(Self::TRUE());
+                            } else {
+                                return Some(Self::FALSE());
+                            }
+                        }
+                    }
+                    _ => {}
+                };
+            }
+            _ => {}
+        }
+        None
+    }
+
     fn evaluate(&self) -> Self {
         match self {
             Expr::Call(function, argument) => {
                 let evaluated_argument = argument.evaluate();
                 let evaluated_function = function.evaluate();
+
+                match Self::handle_builtin_functions(&function, &argument) {
+                    Some(result) => return result,
+                    None => {}
+                }
 
                 match evaluated_function.clone() {
                     Expr::Lambda(_arg, body) => {
@@ -201,22 +170,6 @@ impl Expr {
                             .substitute(&evaluated_argument.adjust_depth(1, 1), 1)
                             .adjust_depth(1, -1)
                             .evaluate();
-                    }
-                    // Special case for OnE AnD oNlY built-in beta-equivalence operator
-                    Expr::Call(operator, right) => {
-                        match operator.evaluate() {
-                            Expr::Var(var) => {
-                                if var.name == String::from("#eq") {
-                                    // Evaluate both and check alpha-equivalence
-                                    if right.evaluate() == evaluated_argument {
-                                        return Self::TRUE();
-                                    } else {
-                                        return Self::FALSE();
-                                    }
-                                }
-                            }
-                            _ => {}
-                        };
                     }
                     _ => {}
                 };
@@ -270,7 +223,44 @@ impl Expr {
                 });
             }
         }
-        self.clone() // TODO: recursively replace_from_context further down
+        match self {
+            Expr::Lambda(arg, body) => {
+                let new_body = body.replace_from_context(context);
+                Expr::Lambda(arg.clone(), Box::new(new_body))
+            }
+            Expr::Call(func, arg) => {
+                let func = func.replace_from_context(context);
+                let arg = arg.replace_from_context(context);
+                Expr::Call(Box::new(func), Box::new(arg))
+            }
+            Expr::Var(_) => self.clone(),
+        }
+    }
+    fn check_assertions(&self) {
+        match self {
+            Expr::Call(func, arg) => {
+                func.check_assertions();
+                arg.check_assertions();
+
+                match *(*func).clone() {
+                    Expr::Var(var) => {
+                        if var.name == "assert" {
+                            return assert!(
+                                **arg == Self::TRUE(),
+                                "Assertion failed: {} expected to be {}",
+                                arg,
+                                Self::TRUE()
+                            );
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Expr::Lambda(_, body) => {
+                body.check_assertions();
+            }
+            _ => {}
+        }
     }
 }
 
@@ -299,43 +289,25 @@ fn main() {
         .iter()
         .filter(|line| !line.starts_with("//") && line.len() > 0)
     {
-        let mut words = line.split(&[' ', '\t']);
-        match words.next().unwrap() {
-            "eval" => {
-                let expr = Expr::from_str(&words.collect::<Vec<_>>().join(" "));
-                println!(
-                    "\n{}\n => {}",
-                    expr,
-                    expr.scoped(&context)
-                        .evaluate()
-                        .replace_from_context(&context)
-                )
-            }
-            "let" => {
+        let mut words = line.split(&[' ', '\t']).peekable();
+        match words.peek().unwrap() {
+            &"let" => {
+                words.next();
                 let variable_name = words.next().unwrap();
                 let expr = Expr::from_str(&words.collect::<Vec<_>>().join(" "));
                 context.push((variable_name.to_string(), expr));
             }
-            "assert" => {
-                let remaining = words.collect::<Vec<_>>().join(" ");
-                let mut chars = remaining.chars().peekable();
-                let left = Expr::from_chars(&mut chars).scoped(&context);
-                let right = Expr::from_chars(&mut chars).scoped(&context);
+            _ => {
+                let input = &words.collect::<Vec<_>>().join(" ");
+                println!();
+                println!("$   {}", input);
+                let expr = Expr::from_str(input).scoped(&context);
+                // println!("~   {}", expr);
+                let result = expr.evaluate();
+                println!("=>  {}", result.replace_from_context(&context));
 
-                let left_eval = left.evaluate();
-                let right_eval = right.evaluate();
-                assert_eq!(
-                    left_eval,
-                    right_eval,
-                    "Assertion failed on line: {}\nLeft: {} => {}\nRight: {} => {}",
-                    line,
-                    left.fmt_de_brujin(),
-                    left_eval.fmt_de_brujin(),
-                    right.fmt_de_brujin(),
-                    right_eval.fmt_de_brujin()
-                );
+                result.check_assertions();
             }
-            _ => panic!("Invalid syntax"),
         }
     }
 }
