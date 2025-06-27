@@ -224,12 +224,16 @@ impl Expr {
             }
         }
     }
-    fn evaluate_scoped(&self, context: &HashMap<String, Expr>) -> Expr {
+    fn scoped(&self, context: &HashMap<String, Expr>) -> Expr {
+        // WARN: collect and sort because otherwise iter does not guarantee any order
+        // This means runs will be not consistent and it's bad for tests
+        let mut entries: Vec<_> = context.iter().collect();
+        entries.sort_by_key(|(name, _expr)| *name);
+
         // TODO: only include functions from context that are actually used
-        let expr = context.iter().fold(self.clone(), |acc, (name, value)| {
-            acc.provide_variable(name, value.clone())
-        });
-        expr.evaluate().replace_from_context(&context)
+        entries.iter().fold(self.clone(), |acc, (name, value)| {
+            acc.provide_variable(name, (*value).clone())
+        })
     }
     fn replace_from_context(&self, context: &HashMap<String, Expr>) -> Expr {
         for (name, value) in context {
@@ -273,7 +277,13 @@ fn main() {
         match words.next().unwrap() {
             "eval" => {
                 let expr = Expr::from_str(&words.collect::<Vec<_>>().join(" "));
-                println!("{}\n => {}", expr, expr.evaluate_scoped(&context))
+                println!(
+                    "{}\n => {}",
+                    expr,
+                    expr.scoped(&context)
+                        .evaluate()
+                        .replace_from_context(&context)
+                )
             }
             "let" => {
                 let variable_name = words.next().unwrap();
@@ -283,9 +293,21 @@ fn main() {
             "assert" => {
                 let remaining = words.collect::<Vec<_>>().join(" ");
                 let mut chars = remaining.chars().peekable();
-                let left = Expr::from_chars(&mut chars).evaluate_scoped(&context);
-                let right = Expr::from_chars(&mut chars).evaluate_scoped(&context);
-                assert_eq!(left, right);
+                let left = Expr::from_chars(&mut chars).scoped(&context);
+                let right = Expr::from_chars(&mut chars).scoped(&context);
+
+                let left_eval = left.evaluate();
+                let right_eval = right.evaluate();
+                assert_eq!(
+                    left_eval,
+                    right_eval,
+                    "Assertion failed on line: {}\nLeft: {} => {}\nRight: {} => {}",
+                    line,
+                    left.fmt_de_brujin(),
+                    left_eval.fmt_de_brujin(),
+                    right.fmt_de_brujin(),
+                    right_eval.fmt_de_brujin()
+                );
             }
             _ => panic!("Invalid syntax"),
         }
