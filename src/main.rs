@@ -252,18 +252,16 @@ impl Expr {
             }
         }
     }
-    fn scoped(&self, context: &HashMap<String, Expr>) -> Expr {
-        // WARN: collect and sort because otherwise iter does not guarantee any order
-        // This means runs will be not consistent and it's bad for tests
-        let mut entries: Vec<_> = context.iter().collect();
-        entries.sort_by_key(|(name, _expr)| *name);
-
+    fn scoped(&self, context: &Vec<(String, Expr)>) -> Expr {
         // TODO: only include functions from context that are actually used
-        entries.iter().fold(self.clone(), |acc, (name, value)| {
-            acc.provide_variable(name, (*value).clone())
-        })
+        context
+            .iter()
+            .rev() // WARN: reverse iterator to apply in the right order
+            .fold(self.clone(), |acc, (name, value)| {
+                acc.provide_variable(name, (*value).clone())
+            })
     }
-    fn replace_from_context(&self, context: &HashMap<String, Expr>) -> Expr {
+    fn replace_from_context(&self, context: &Vec<(String, Expr)>) -> Expr {
         for (name, value) in context {
             if value == self {
                 return Expr::Var(Variable {
@@ -295,7 +293,7 @@ fn extract_from_markdown() -> Vec<String> {
 }
 
 fn main() {
-    let mut context = HashMap::<String, Expr>::new();
+    let mut context = vec![];
 
     for line in extract_from_markdown()
         .iter()
@@ -306,7 +304,7 @@ fn main() {
             "eval" => {
                 let expr = Expr::from_str(&words.collect::<Vec<_>>().join(" "));
                 println!(
-                    "{}\n => {}",
+                    "\n{}\n => {}",
                     expr,
                     expr.scoped(&context)
                         .evaluate()
@@ -316,7 +314,7 @@ fn main() {
             "let" => {
                 let variable_name = words.next().unwrap();
                 let expr = Expr::from_str(&words.collect::<Vec<_>>().join(" "));
-                context.insert(variable_name.to_string(), expr);
+                context.push((variable_name.to_string(), expr));
             }
             "assert" => {
                 let remaining = words.collect::<Vec<_>>().join(" ");
