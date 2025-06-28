@@ -99,6 +99,13 @@ assert_eq (if true then else) then
 assert_eq (if false then else) else
 ```
 
+### Pairs
+```js
+let pair λx.λy.λf.f x y
+let pair_first λp.p true
+let pair_second λp.p false
+```
+
 ### Arithmetic
 N-th Church number is a function that is essentially "Repeat N times".
 ```js
@@ -115,6 +122,14 @@ assert_eq (2 f x) (f (f x))
 
 assert_eq (succ (succ 0)) 2
 assert_eq (2 succ 0) 2
+
+// Shift-and-increment function: (m, n) -> (n, n + 1)
+let Φ λx.pair (pair_second x) (succ (pair_second x))
+let pred λn.pair_first (n Φ (pair 0 0))
+
+assert_eq (pred 0) 0
+assert_eq (pred 1) 0
+assert_eq (pred 2) 1
 
 // A + B is A, with "succ" function applied B times
 let + λa.λb.((b succ) a)
