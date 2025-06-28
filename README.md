@@ -93,10 +93,6 @@ assert_eq (not false) true
 let and λp.λq.((p q) p)
 assert_eq (and true x) x
 assert_eq (and false x) false
-
-let if λcondition.λthen.λelse.((condition then) else)
-assert_eq (if true then else) then
-assert_eq (if false then else) else
 ```
 
 ### Pairs
@@ -152,4 +148,13 @@ let 64 (double 32) // Good luck actually using this value until compiler is opti
 
 assert_eq ((+ ((+ 4) 8)) 4) 16
 assert_eq (square 4) 16
+```
+
+### Recursion
+```js
+// The famous Y-combinator
+let Y λf.(λx.f (x x)) (λx.f (x x))
+let fact Y (λf.λn.(= 0 n) 1 (* n (f (pred n))))
+
+assert_eq (fact 4) (+ 8 16)
 ```

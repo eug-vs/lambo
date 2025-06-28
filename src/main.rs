@@ -1,8 +1,4 @@
-use std::{
-    fmt::Display,
-    fs,
-    io::{Write, stdout},
-};
+use std::{fmt::Display, fs};
 mod parser;
 
 #[derive(Debug, Clone)]
@@ -140,8 +136,8 @@ impl Expr {
                 match &**operator {
                     Expr::Var(var) => {
                         if var.name == String::from("#eq") {
-                            // Compare beta-equivalence, evaluate with disabled side-effects
-                            if right.evaluate(false) == argument.evaluate(false) {
+                            // Compare beta-equivalence
+                            if right.evaluate_normal() == argument.evaluate_normal() {
                                 return Some(Self::TRUE());
                             } else {
                                 return Some(Self::FALSE());
@@ -152,6 +148,7 @@ impl Expr {
                 };
             }
             Expr::Var(var) => match var.name.as_str() {
+                "#compile" => return Some(argument.evaluate_normal()),
                 "#dump" => {
                     if side_effects {
                         println!("\nDump: {}\n", argument);
@@ -169,14 +166,51 @@ impl Expr {
         }
         None
     }
-
-    /// Evaluate expression using Normal Order strategy.
+    /// Normal Order (as per definition, with lambda abstraction folding)
     /// This evaluation order guarantees to converge to a normal form if it exists.
-    fn evaluate(&self, side_effects: bool) -> Self {
+    fn evaluate_normal(&self) -> Expr {
+        match self {
+            Expr::Call(func, argument) => {
+                let evaluated_func = func.evaluate_normal();
+                // disable side effects
+                match Self::handle_builtin_functions(&evaluated_func, &argument, false) {
+                    Some(result) => return result,
+                    None => {}
+                }
+
+                match evaluated_func {
+                    Expr::Lambda(_arg, body) => {
+                        // We start from 1 (see above)
+                        return body
+                            .substitute(&argument.adjust_depth(1, 1), 1)
+                            .adjust_depth(1, -1)
+                            .evaluate_normal();
+                    }
+                    Expr::Var(_) => {
+                        // Evaluated function is just a variable - can not substitute.
+                        // But we still have to reduce down to normal form, so evaluate argument
+                        Expr::Call(
+                            Box::new(evaluated_func),
+                            Box::new(argument.evaluate_normal()),
+                        )
+                    }
+                    // Call is no longer reducible, already in normal form
+                    _ => self.clone(),
+                }
+            }
+            Expr::Lambda(name, body) => {
+                Expr::Lambda(name.clone(), Box::new(body.evaluate_normal()))
+            }
+            _ => self.clone(),
+        }
+    }
+
+    /// Evaluate expression using Non-Strict Order strategy (Call by Name, aka Lazy)
+    fn evaluate(&self) -> Self {
         match self {
             Expr::Call(function, argument) => {
-                let evaluated_function = function.evaluate(side_effects);
-                match Self::handle_builtin_functions(&evaluated_function, &argument, side_effects) {
+                let evaluated_function = function.evaluate();
+                match Self::handle_builtin_functions(&evaluated_function, &argument, true) {
                     Some(result) => return result,
                     None => {}
                 }
@@ -185,24 +219,21 @@ impl Expr {
                         // We start from 1 (see above)
                         body.substitute(&argument.adjust_depth(1, 1), 1)
                             .adjust_depth(1, -1)
-                            .evaluate(side_effects)
+                            .evaluate()
                     }
                     Expr::Var(_) => {
                         // Evaluated function is just a variable - can not substitute.
                         // But we still have to reduce down to normal form, so evaluate argument
-                        Expr::Call(
-                            Box::new(evaluated_function),
-                            Box::new(argument.evaluate(side_effects)),
-                        )
+                        Expr::Call(Box::new(evaluated_function), Box::new(argument.evaluate()))
                     }
                     // Call is no longer reducible, already in normal form
                     _ => self.clone(),
                 }
             }
-            // If it comes to reducing lambda down to normal form - we have to evaluate the body.
-            // But since it was not actually **called**, we run it without side-effects.
-            Expr::Lambda(name, body) => Expr::Lambda(name.clone(), Box::new(body.evaluate(false))),
-            expr => expr.clone(),
+            // Since we are doing "Call by Name" evaluation, we do not collapse Lambda body, i.e
+            // λx.(SOME_HARD_TO_COMPUTE_FUNCTION)
+            // will not get evaluated until it's actually called
+            _ => self.clone(),
         }
     }
     fn substitute(&self, with: &Expr, at_depth: usize) -> Expr {
@@ -301,7 +332,7 @@ fn main() {
                 println!("$   {}", input);
                 let expr = Expr::from_str(input).scoped(&context);
                 // println!("~   {}", expr);
-                let result = expr.evaluate(true);
+                let result = expr.evaluate();
                 println!("=>  {}", result.replace_from_context(&context));
             }
         }
