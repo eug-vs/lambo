@@ -129,15 +129,19 @@ impl Expr {
         }
     }
 
-    fn handle_builtin_functions(function: &Expr, argument: &Expr) -> Option<Expr> {
+    fn handle_builtin_functions(
+        function: &Expr,
+        argument: &Expr,
+        side_effects: bool,
+    ) -> Option<Expr> {
         match function {
             // Beta-equivalence operator: #eq
             Expr::Call(operator, right) => {
-                match operator.evaluate() {
+                match &**operator {
                     Expr::Var(var) => {
                         if var.name == String::from("#eq") {
-                            // Evaluate both and check alpha-equivalence
-                            if right.evaluate() == *argument {
+                            // Compare beta-equivalence, evaluate with disabled side-effects
+                            if right.evaluate(false) == argument.evaluate(false) {
                                 return Some(Self::TRUE());
                             } else {
                                 return Some(Self::FALSE());
@@ -149,11 +153,15 @@ impl Expr {
             }
             Expr::Var(var) => match var.name.as_str() {
                 "#dump" => {
-                    println!("Dump: {}", argument);
+                    if side_effects {
+                        println!("\nDump: {}\n", argument);
+                    }
                     return Some(argument.clone());
                 }
                 "#throw" => {
-                    panic!("Throw: {}", argument);
+                    if side_effects {
+                        panic!("Throw: {}", argument);
+                    }
                 }
                 _ => {}
             },
@@ -162,29 +170,38 @@ impl Expr {
         None
     }
 
-    fn evaluate(&self) -> Self {
+    /// Evaluate expression using Normal Order strategy.
+    /// This evaluation order guarantees to converge to a normal form if it exists.
+    fn evaluate(&self, side_effects: bool) -> Self {
         match self {
             Expr::Call(function, argument) => {
-                let evaluated_argument = argument.evaluate();
-                let evaluated_function = function.evaluate();
-
-                match Self::handle_builtin_functions(&evaluated_function, &evaluated_argument) {
+                let evaluated_function = function.evaluate(side_effects);
+                match Self::handle_builtin_functions(&evaluated_function, &argument, side_effects) {
                     Some(result) => return result,
                     None => {}
                 }
-
                 match evaluated_function {
                     Expr::Lambda(_arg, body) => {
                         // We start from 1 (see above)
-                        return body
-                            .substitute(&evaluated_argument.adjust_depth(1, 1), 1)
+                        body.substitute(&argument.adjust_depth(1, 1), 1)
                             .adjust_depth(1, -1)
-                            .evaluate();
+                            .evaluate(side_effects)
                     }
-                    _ => {}
-                };
-                Expr::Call(Box::new(evaluated_function), Box::new(evaluated_argument))
+                    Expr::Var(_) => {
+                        // Evaluated function is just a variable - can not substitute.
+                        // But we still have to reduce down to normal form, so evaluate argument
+                        Expr::Call(
+                            Box::new(evaluated_function),
+                            Box::new(argument.evaluate(side_effects)),
+                        )
+                    }
+                    // Call is no longer reducible, already in normal form
+                    _ => self.clone(),
+                }
             }
+            // If it comes to reducing lambda down to normal form - we have to evaluate the body.
+            // But since it was not actually **called**, we run it without side-effects.
+            Expr::Lambda(name, body) => Expr::Lambda(name.clone(), Box::new(body.evaluate(false))),
             expr => expr.clone(),
         }
     }
@@ -268,6 +285,7 @@ fn main() {
     for line in extract_from_markdown()
         .iter()
         .filter(|line| !line.starts_with("//") && line.len() > 0)
+        .map(|line| line.split("//").next().unwrap())
     {
         let mut words = line.split(&[' ', '\t']).peekable();
         match words.peek().unwrap() {
@@ -283,7 +301,7 @@ fn main() {
                 println!("$   {}", input);
                 let expr = Expr::from_str(input).scoped(&context);
                 // println!("~   {}", expr);
-                let result = expr.evaluate();
+                let result = expr.evaluate(true);
                 println!("=>  {}", result.replace_from_context(&context));
             }
         }
