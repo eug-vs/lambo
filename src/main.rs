@@ -147,6 +147,16 @@ impl Expr {
                     _ => {}
                 };
             }
+            Expr::Var(var) => match var.name.as_str() {
+                "#dump" => {
+                    println!("Dump: {}", argument);
+                    return Some(argument.clone());
+                }
+                "#throw" => {
+                    panic!("Throw: {}", argument);
+                }
+                _ => {}
+            },
             _ => {}
         }
         None
@@ -158,12 +168,12 @@ impl Expr {
                 let evaluated_argument = argument.evaluate();
                 let evaluated_function = function.evaluate();
 
-                match Self::handle_builtin_functions(&function, &argument) {
+                match Self::handle_builtin_functions(&evaluated_function, &evaluated_argument) {
                     Some(result) => return result,
                     None => {}
                 }
 
-                match evaluated_function.clone() {
+                match evaluated_function {
                     Expr::Lambda(_arg, body) => {
                         // We start from 1 (see above)
                         return body
@@ -174,10 +184,6 @@ impl Expr {
                     _ => {}
                 };
                 Expr::Call(Box::new(evaluated_function), Box::new(evaluated_argument))
-            }
-            Expr::Lambda(name, body) => {
-                let evaluated_body = body.evaluate();
-                Self::Lambda(name.clone(), Box::new(evaluated_body))
             }
             expr => expr.clone(),
         }
@@ -236,32 +242,6 @@ impl Expr {
             Expr::Var(_) => self.clone(),
         }
     }
-    fn check_assertions(&self) {
-        match self {
-            Expr::Call(func, arg) => {
-                func.check_assertions();
-                arg.check_assertions();
-
-                match *(*func).clone() {
-                    Expr::Var(var) => {
-                        if var.name == "assert" {
-                            return assert!(
-                                **arg == Self::TRUE(),
-                                "Assertion failed: {} expected to be {}",
-                                arg,
-                                Self::TRUE()
-                            );
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            Expr::Lambda(_, body) => {
-                body.check_assertions();
-            }
-            _ => {}
-        }
-    }
 }
 
 fn extract_from_markdown() -> Vec<String> {
@@ -305,8 +285,6 @@ fn main() {
                 // println!("~   {}", expr);
                 let result = expr.evaluate();
                 println!("=>  {}", result.replace_from_context(&context));
-
-                result.check_assertions();
             }
         }
     }
