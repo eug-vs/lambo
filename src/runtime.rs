@@ -7,6 +7,7 @@ pub enum IOMonad {
     Pure(Expr),
     /// Some expression to-be-printed to console
     Print(Expr),
+    Debug(Expr),
     /// Some expression to-be-thrown
     Throw(Expr),
     /// An action that will read and parse lambda from STDIN
@@ -29,6 +30,9 @@ impl IOMonad {
                 }
                 Expr::Var(Variable { name, kind: _ }) if name == "#io_print" => {
                     return Some(Ok(IOMonad::Print(*argument.clone())));
+                }
+                Expr::Var(Variable { name, kind: _ }) if name == "#io_dbg" => {
+                    return Some(Ok(IOMonad::Debug(*argument.clone())));
                 }
                 Expr::Var(Variable { name, kind: _ }) if name == "#io_throw" => {
                     return Some(Ok(IOMonad::Throw(*argument.clone())));
@@ -57,14 +61,24 @@ impl IOMonad {
     }
 
     /// Flatmapping can fail if provided transform function does not return IO
-    pub fn unwrap(&self) -> Result<Expr, String> {
+    pub fn unwrap(&mut self) -> Result<Expr, String> {
         match self {
-            Self::Pure(expr) => Ok(expr.evaluate()),
+            Self::Pure(expr) => {
+                expr.evaluate_lazy();
+                Ok(expr.clone())
+            }
             Self::Print(expr) => {
+                expr.evaluate_lazy();
                 println!("=>  {}", expr);
-                Ok(expr.evaluate())
+                Ok(expr.clone())
+            }
+            Self::Debug(expr) => {
+                expr.evaluate_lazy();
+                println!("=>  {}", expr.fmt_de_brujin());
+                Ok(expr.clone())
             }
             Self::Throw(expr) => {
+                expr.evaluate_lazy();
                 panic!("{}", expr);
             }
             Self::ReadLambda => {
@@ -72,12 +86,15 @@ impl IOMonad {
                 stdout().flush().unwrap();
                 let mut s = String::new();
                 stdin().read_line(&mut s).unwrap();
-                Ok(Expr::from_str(&s).evaluate())
+                let mut expr = Expr::from_str(&s);
+                expr.evaluate_lazy();
+                Ok(expr)
             }
             Self::Flatmap(io, transform) => {
                 let unwrapped = io.unwrap()?;
-                let transform_result =
-                    Expr::Call(Box::new(transform.clone()), Box::new(unwrapped)).evaluate();
+                let mut transform_result =
+                    Expr::Call(Box::new(transform.clone()), Box::new(unwrapped));
+                transform_result.evaluate_lazy();
                 IOMonad::from_expr(&transform_result)
                     .unwrap_or(Err(format!(
                         "Evaluated result is not an IO (this will be later checked at type level): {transform_result}"

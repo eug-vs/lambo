@@ -1,4 +1,4 @@
-use std::{fmt::Display, fs, io::stdin};
+use std::{fmt::Display, fs};
 
 use crate::runtime::IOMonad;
 mod parser;
@@ -101,33 +101,26 @@ impl Expr {
     }
     /// Performs an adjustment to variables' depths.
     /// Always call with `cutoff=1` initially
-    fn adjust_depth(&self, cutoff: usize, by: isize) -> Expr {
+    fn adjust_depth(&mut self, cutoff: usize, by: isize) {
         match self {
             Expr::Var(var) => match var.kind {
                 VariableKind::Bound(d) => {
                     if d >= cutoff {
-                        Expr::Var(Variable {
-                            name: var.name.clone(),
-                            kind: VariableKind::Bound(((d as isize) + by) as usize),
-                        })
-                    } else {
-                        self.clone()
+                        var.kind = VariableKind::Bound(((d as isize) + by) as usize);
                     }
                 }
-                _ => self.clone(),
+                _ => {}
             },
-            Expr::Lambda(arg_name, body) => {
-                let adjusted_body = body.adjust_depth(cutoff + 1, by);
-                Expr::Lambda(arg_name.clone(), Box::new(adjusted_body))
+            Expr::Lambda(_, body) => {
+                body.adjust_depth(cutoff + 1, by);
             }
             Expr::Call(func, arg) => {
-                let adjusted_func = func.adjust_depth(cutoff, by);
-                let adjusted_arg = arg.adjust_depth(cutoff, by);
-                Expr::Call(Box::new(adjusted_func), Box::new(adjusted_arg))
+                func.adjust_depth(cutoff, by);
+                arg.adjust_depth(cutoff, by);
             }
         }
     }
-    fn handle_builtin_functions(function: &Expr, argument: &Expr) -> Option<Expr> {
+    fn handle_builtin_functions(function: &mut Expr, argument: &mut Expr) -> Option<Expr> {
         match function {
             // Beta-equivalence operator: #eq
             Expr::Call(operator, right) => {
@@ -136,7 +129,9 @@ impl Expr {
                         match var.name.as_str() {
                             "#eq" => {
                                 // Compare beta-equivalence
-                                if right.evaluate_normal() == argument.evaluate_normal() {
+                                right.evaluate_normal();
+                                argument.evaluate_normal();
+                                if **right == *argument {
                                     return Some(Self::TRUE());
                                 } else {
                                     return Some(Self::FALSE());
@@ -149,103 +144,78 @@ impl Expr {
                 };
             }
             Expr::Var(var) => match var.name.as_str() {
-                "#compile" => return Some(argument.evaluate_normal()),
                 _ => {}
             },
             _ => {}
         }
         None
     }
-    /// Normal Order (as per definition, with lambda abstraction folding)
-    /// This evaluation order guarantees to converge to a normal form if it exists.
-    fn evaluate_normal(&self) -> Expr {
-        match self {
-            Expr::Call(func, argument) => {
-                let evaluated_func = func.evaluate_normal();
-                // disable side effects
-                match Self::handle_builtin_functions(&evaluated_func, &argument) {
-                    Some(result) => return result,
-                    None => {}
-                }
+    fn evaluate_normal(&mut self) {
+        self.evaluate(false);
+    }
 
-                match evaluated_func {
-                    Expr::Lambda(_arg, body) => {
-                        // We start from 1 (see above)
-                        return body
-                            .substitute(&argument.adjust_depth(1, 1), 1)
-                            .adjust_depth(1, -1)
-                            .evaluate_normal();
-                    }
-                    Expr::Var(_) => {
-                        // Evaluated function is just a variable - can not substitute.
-                        // But we still have to reduce down to normal form, so evaluate argument
-                        Expr::Call(
-                            Box::new(evaluated_func),
-                            Box::new(argument.evaluate_normal()),
-                        )
-                    }
-                    // Call is no longer reducible, already in normal form
-                    _ => self.clone(),
-                }
-            }
-            Expr::Lambda(name, body) => {
-                Expr::Lambda(name.clone(), Box::new(body.evaluate_normal()))
-            }
-            _ => self.clone(),
-        }
+    fn evaluate_lazy(&mut self) {
+        self.evaluate(true);
     }
 
     /// Evaluate expression using Non-Strict Order strategy (Call by Name, aka Lazy)
-    fn evaluate(&self) -> Self {
+    fn evaluate(&mut self, lazy: bool) {
         match self {
             Expr::Call(function, argument) => {
-                let evaluated_function = function.evaluate();
-                match Self::handle_builtin_functions(&evaluated_function, &argument) {
-                    Some(result) => return result,
+                function.evaluate(lazy);
+                match Self::handle_builtin_functions(function, argument) {
+                    Some(result) => {
+                        *self = result;
+                        return;
+                    }
                     None => {}
                 }
-                match evaluated_function {
+                match &mut **function {
                     Expr::Lambda(_arg, body) => {
-                        // We start from 1 (see above)
-                        body.substitute(&argument.adjust_depth(1, 1), 1)
-                            .adjust_depth(1, -1)
-                            .evaluate()
+                        let mut argument = argument.clone();
+                        argument.adjust_depth(1, 1);
+                        body.substitute(*argument, 1);
+                        body.adjust_depth(1, -1);
+                        body.evaluate(lazy);
+                        *self = *body.clone();
+                        return;
                     }
                     Expr::Var(_) => {
-                        // Evaluated function is just a variable - can not substitute.
-                        // But we still have to reduce down to normal form, so evaluate argument
-                        Expr::Call(Box::new(evaluated_function), Box::new(argument.evaluate()))
+                        argument.evaluate(lazy);
+                        return;
                     }
                     // Call is no longer reducible, already in normal form
-                    _ => self.clone(),
+                    _ => {}
                 }
             }
             // Since we are doing "Call by Name" evaluation, we do not collapse Lambda body, i.e
             // λx.(SOME_HARD_TO_COMPUTE_FUNCTION)
             // will not get evaluated until it's actually called
-            _ => self.clone(),
+            Expr::Lambda(_, body) => {
+                if !lazy {
+                    body.evaluate(lazy);
+                }
+            }
+            _ => {}
         }
     }
-    fn substitute(&self, with: &Expr, at_depth: usize) -> Expr {
+    fn substitute(&mut self, mut with: Expr, at_depth: usize) {
         match self {
             Expr::Var(var) => match var.kind {
                 VariableKind::Bound(d) => {
                     if d == at_depth {
-                        with.clone()
-                    } else {
-                        self.clone()
+                        *self = with.clone();
                     }
                 }
-                _ => self.clone(),
+                _ => {}
             },
-            Expr::Lambda(arg_name, body) => {
-                let new_body = body.substitute(&with.adjust_depth(1, 1), at_depth + 1);
-                Self::Lambda(arg_name.clone(), Box::new(new_body))
+            Expr::Lambda(_, body) => {
+                with.adjust_depth(1, 1);
+                body.substitute(with, at_depth + 1);
             }
             Expr::Call(func, arg) => {
-                let new_func = func.substitute(with, at_depth);
-                let new_arg = arg.substitute(with, at_depth);
-                Self::Call(Box::new(new_func), Box::new(new_arg))
+                func.substitute(with.clone(), at_depth);
+                arg.substitute(with, at_depth);
             }
         }
     }
@@ -320,13 +290,13 @@ fn main() {
                 let input = &words.collect::<Vec<_>>().join(" ");
                 println!();
                 println!("$   {}", input);
-                let expr = Expr::from_str(input).scoped(&context);
+                let mut expr = Expr::from_str(input).scoped(&context);
                 // println!("~   {}", expr);
-                let result = expr.evaluate();
-                println!("=>  {}", result.replace_from_context(&context));
+                expr.evaluate_lazy();
+                println!("=>  {}", expr.replace_from_context(&context));
 
-                match IOMonad::from_expr(&result) {
-                    Some(Ok(monad)) => match monad.unwrap() {
+                match IOMonad::from_expr(&expr) {
+                    Some(Ok(mut monad)) => match monad.unwrap() {
                         Ok(runtime_result) => println!("==> {}", runtime_result),
                         Err(msg) => println!("Runtime error: {}", msg),
                     },
