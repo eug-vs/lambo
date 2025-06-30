@@ -11,9 +11,11 @@ Each Lambo expression goes through 2 phases: Evaluation and Runtime.
  - Runtime: runs evaluated expression **with** side-effects (IO). It is **impure** and **non-deterministic**, because the output entirely depends on the external factors (e.g what you put into console at runtime). More on Runtime later in this README.
 
 The output is structured like this:
-$   <EXPRESSION>
-=>  <EVALUATION_RESULT>
-==> <RUNTIME_RESULT>
+`$   <EXPRESSION>`
+
+`=>  <EVALUATION_RESULT>`
+
+`==> <RUNTIME_RESULT>`
 
 ## Evaluation order
 Many (imperative) programming languages use Strict (Applicative) evaluation order: when function call happens, arguments are evaluated before getting passed to a function. E.g in JavaScript, `f(x)` will first evaluate `x`, and only then pass the result to `f` as an argument.
@@ -51,8 +53,11 @@ every evaluation below it into a closure providing `<expr>` as a named argument.
 
 Every expression below will be transformed into `(λ<variable_name>.<original>) <variable_expr>`.
 
-Example of creating an alias to built-in `#eq` function:
 ```js
+// Identity function
+let id λx.x
+
+// Alias to built-in beta-equivalence operator #eq
 let = #eq
 ```
 
@@ -69,7 +74,7 @@ let assertion_pass λa.λb.PASS
 let assertion_fail λa.λb.#io_throw (FAIL (LEFT a) (RIGHT b))
 
 // (#eq a b) is a Church boolean, therefore works nicely as if/then/else selector
-let assert_eq λa.λb.((#eq a b) assertion_pass assertion_fail) a b
+let assert_eq λa.λb.((= a b) assertion_pass assertion_fail) a b
 
 assert_eq λx.x ((λy.λz.z) y)
 // => PASS
@@ -133,6 +138,7 @@ assert_eq (pred 2) 1
 
 // A + B is A, with "succ" function applied B times
 let + λa.λb.((b succ) a)
+let - λa.λb.((b pred) a)
 
 // A * B is (+ A) function applied B times to 0
 let * λa.λb.((b (+ a)) 0)
@@ -148,7 +154,7 @@ let 4 (double 2)
 let 8 (double 4)
 let 16 (double 8)
 let 32 (double 16)
-let 64 (double 32) // Good luck actually using this value until compiler is optimized
+let 64 (double 32)
 
 assert_eq ((+ ((+ 4) 8)) 4) 16
 assert_eq (square 4) 16
@@ -162,6 +168,7 @@ let Y λf.(λx.f (x x)) (λx.f (x x))
 let fact Y (λf.λn.(= 0 n) 1 (* n (f (pred n))))
 
 assert_eq (fact 4) (+ 16 8)
+assert_eq (fact (succ 4)) (+ (+ (+ 64 32) 16) 8)
 ```
 
 ## Runtime
@@ -195,13 +202,47 @@ let none        λs.λn.n
 
 let option_flatmap   λoption.λtransform.option transform option
 let option_map       λoption.λtransform.option λx.(some (transform x)) option
-let option_unwrap    λoption.option λx.x (#io_throw EMPTY_OPTION)
-let option_unwrap_or λoption.λdefault.option λx.x default 
+let option_or        λoption.λdefault.option some default 
+let option_unwrap    λoption.option id (#io_throw EMPTY_OPTION)
+let option_unwrap_or λoption.λdefault.option id default
 
 assert_eq (option_map (some 0) succ) (some 1)
 assert_eq (option_unwrap (option_map (some 2) double)) 4
 
+assert_eq (option_or none (some 1)) (some 1)
+assert_eq (option_or (some 2) (some 1)) (some 2)
+
 assert_eq (option_unwrap_or none DEFAULT) DEFAULT
 
 assert_eq (option_unwrap none) (#io_throw EMPTY_OPTION)
+
+```
+
+## Convenience: Streams and Folds
+The idea of `fold_stream` is to consume arbitrarily large stream of Options, accumulating the result. It's *not quite* the stream in usual sense, but you get the idea.
+
+Instead of writing `(+ (+ (+ 4 1) 2) 1)` we can be a bit more fancy: `stream_sum (some 4) (some 1) (some 2) (some 1) none`, and this can be generalized to other operations.
+```js
+
+// Keeps applying combine function until encounters first None. Returns accumulated result
+let fold_stream λcombine.λinit.(Y λf.λacc.λoption.(option (\x.(f (combine x acc))) acc)) init
+
+let stream_sum (fold_stream + 0)
+
+assert_eq (stream_sum none) 0
+assert_eq (stream_sum (some 4) (some 1) (some 2) (some 1) none) 8
+```
+
+## Binary number constructor (wtf?)
+This is my in-house creation. Don't judge!
+
+Works very similar to fold_stream above, but with the help of the extra counter is able to decode binary numbers.
+Currently doesn't use Option to not clutter syntax too much. Ideally we would zip our stream of booleans with the stream of natural numbers, and then fold it easily.
+```js
+let pow_2 λn.(n double 1)
+
+// Keeps accumulating boolean values until you give it END. Returns the number :)
+let binary (Y λf.λi.λacc.λbool_or_end.((#eq bool_or_end END) acc (f (succ i) (bool_or_end (+ acc (pow_2 i)) acc)))) 0 0
+
+assert_eq (binary true false true END) (+ 1 4)
 ```
