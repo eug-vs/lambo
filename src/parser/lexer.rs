@@ -8,10 +8,12 @@ pub enum Token {
     Lambda,
     Dot,
     Pipe,
+    With,
+    In,
     Eof,
 }
 
-fn match_reserved_token(c: char) -> Option<Token> {
+fn match_single_char_token(c: char) -> Option<Token> {
     match c {
         '(' => Some(Token::OpenParen),
         ')' => Some(Token::CloseParen),
@@ -26,11 +28,11 @@ fn match_reserved_token(c: char) -> Option<Token> {
 pub fn lexer(input: &str) -> impl Iterator<Item = Token> {
     input
         .split_ascii_whitespace()
-        .flat_map(|token| {
-            let mut chars = token.chars().peekable();
+        .flat_map(|word| {
+            let mut chars = word.chars().peekable();
             from_fn(move || {
                 let c = chars.peek()?;
-                match match_reserved_token(*c) {
+                match match_single_char_token(*c) {
                     Some(token) => {
                         chars.next(); // Consume
                         Some(token)
@@ -40,7 +42,7 @@ pub fn lexer(input: &str) -> impl Iterator<Item = Token> {
                         let mut variable_name = String::new();
                         loop {
                             match chars.peek() {
-                                Some(c) => match match_reserved_token(*c) {
+                                Some(c) => match match_single_char_token(*c) {
                                     Some(_) => break,
                                     None => {}
                                 },
@@ -53,6 +55,11 @@ pub fn lexer(input: &str) -> impl Iterator<Item = Token> {
                     }
                 }
             })
+        })
+        .map(|token| match token {
+            Token::Symbol(name) if name == "with" => Token::With,
+            Token::Symbol(name) if name == "in" => Token::In,
+            _ => token,
         })
         .chain(once(Token::Eof))
 }

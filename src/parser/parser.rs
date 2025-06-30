@@ -29,13 +29,13 @@ pub fn parse_expr<I: Iterator<Item = Token>>(
             })
         }
         Token::Lambda => {
-            let variable_name = match tokens.next().unwrap() {
-                Token::Symbol(name) => name,
+            let variable_name = match tokens.next() {
+                Some(Token::Symbol(name)) => name,
                 token => panic!("Expected variable name, got: {:?}", token),
             };
             ctx.push(variable_name.clone());
-            match tokens.next().unwrap() {
-                Token::Dot => {}
+            match tokens.next() {
+                Some(Token::Dot) => {}
                 token => panic!("Expected DOT, got: {:?}", token),
             }
             let body = parse_expr(tokens, 0, ctx.clone());
@@ -43,17 +43,30 @@ pub fn parse_expr<I: Iterator<Item = Token>>(
         }
         Token::OpenParen => {
             let result = parse_expr(tokens, 0, ctx.clone());
-            match tokens.next().unwrap() {
-                Token::CloseParen => {}
+            match tokens.next() {
+                Some(Token::CloseParen) => {}
                 token => panic!("Expected CloseParen, got: {:?}", token),
             }
             result
+        }
+        Token::With => {
+            let variable_name = match tokens.next() {
+                Some(Token::Symbol(name)) => name,
+                token => panic!("Expected variable name, got: {:?}", token),
+            };
+            let value = parse_expr(tokens, 0, ctx.clone());
+            match tokens.next() {
+                Some(Token::In) => {}
+                token => panic!("Expected In, got: {:?}", token),
+            };
+            let expr = parse_expr(tokens, 0, ctx.clone());
+            expr.provide_variable(variable_name.as_str(), value)
         }
         token => panic!("Invalid syntax: unexpected token {:?}", token),
     };
     loop {
         let next_token = match tokens.peek().unwrap() {
-            Token::Eof | Token::CloseParen => break,
+            Token::Eof | Token::CloseParen | Token::In => break,
             token => token,
         };
         let (l_bp, r_bp) = binding_power(&next_token);

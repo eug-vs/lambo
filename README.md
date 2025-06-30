@@ -66,17 +66,16 @@ Let's build our first useful function: `assert_eq`. It will take two input
 values and throw an error if they are not beta-equivalent. `#io_throw` here is a special beast that we will touch in later sections.
 
 ```js
-// Define helpers
-let assertion_pass λa.λb.PASS
 // FAIL, LEFT, RIGHT are just made-up names (free variables).
 // As long as they are not reduced to anything, this is very
 // useful to convey some meaning of the thrown value
-let assertion_fail λa.λb.#io_throw (FAIL (LEFT a) (RIGHT b))
+[let assert_eq
+    with assertion_pass λa.λb.PASS in
+    with assertion_fail λa.λb.#io_throw (FAIL (LEFT a) (RIGHT b)) in
+    // (#eq a b) is a Church boolean, therefore works nicely as if/then/else selector
+    λa.λb.((= a b) assertion_pass assertion_fail) a b]
 
-// (#eq a b) is a Church boolean, therefore works nicely as if/then/else selector
-let assert_eq λa.λb.((= a b) assertion_pass assertion_fail) a b
-
-assert_eq λx.x ((λy.λz.z) y)
+assert_eq (λx.x) ((λy.λz.z) y)
 // => PASS
 
 // Shorthand for assert_eq true
@@ -164,8 +163,14 @@ assert_eq (square 4) 16
 Achieving recursion proves Turing-completeness of the language.
 ```js
 // The famous Y-combinator
-let Y λf.(λx.f (x x)) (λx.f (x x))
-let fact Y (λf.λn.(= 0 n) 1 (* n (f (pred n))))
+[let Y λf.
+    (λx.f (x x))
+    (λx.f (x x))]
+
+[let fact Y λf.λn.
+    (= 0 n)
+    1
+    (n | pred | f | (* n))]
 
 assert_eq (fact 4) (+ 16 8)
 assert_eq (fact (succ 4)) (64 | (+ 32) | (+ 16) | (+ 8))
@@ -187,11 +192,19 @@ Please note that before Runtime gets into play, evaluator will treat all these v
 
 ```js
 // Reads two expressions from STDIN and prints the result of equality check
-let program #io_flatmap #io_read (\x.#io_flatmap #io_read \y.(#io_print (= x y) )))
+[let program #io_flatmap #io_read \x.
+            #io_flatmap #io_read \y.
+            (#io_print (= x y) )]
+
 // ^ program has "type" IO, meaning you can actually run it with all side effects
 
 // A funny one with recursion: keep reading from STDIN until the user inputs true
-let program Y (λf.(#io_flatmap #io_read (λx.(= true x) (#io_pure DONE) (#io_flatmap (#io_print PLEASE_GIVE_TRUE) (\_.f))   )))
+[let program Y λf.
+    #io_flatmap #io_read λx.
+    (= true x)
+        (#io_pure DONE)
+        (#io_flatmap (#io_print PLEASE_GIVE_TRUE) (\_.f))]
+
 ```
 
 ## More monads: Option
@@ -201,7 +214,7 @@ let some     λx.λs.λn.s x
 let none        λs.λn.n
 
 let option_flatmap   λoption.λtransform.option transform option
-let option_map       λoption.λtransform.option λx.(some (transform x)) option
+let option_map       λoption.λtransform.option (λx.x | transform | some) option
 let option_or        λoption.λdefault.option some default 
 let option_unwrap    λoption.option id (#io_throw EMPTY_OPTION)
 let option_unwrap_or λoption.λdefault.option id default
@@ -228,7 +241,10 @@ Instead of writing `(+ (+ (+ 4 1) 2) 1)` we can be a bit more fancy: `stream_sum
 ```js
 
 // Keeps applying combine function until encounters first None. Returns accumulated result
-let fold_stream λcombine.λinit.(Y λf.λacc.λoption.(option (\x.(f (combine x acc))) acc)) init
+[let fold_stream λcombine.λinit.
+    (Y λf.λacc.λoption.
+        option (\x.(combine x acc) | f) acc
+    ) init]
 
 let stream_sum (fold_stream + 0)
 
@@ -243,10 +259,19 @@ This is my in-house creation. Don't judge!
 Works very similar to fold_stream above, but with the help of the extra counter is able to decode binary numbers.
 Currently doesn't use Option to not clutter syntax too much. Ideally we would zip our stream of booleans with the stream of natural numbers, and then fold it easily.
 ```js
-let pow_2 λn.(n double 1)
-
 // Keeps accumulating boolean values until you give it END. Returns the number :)
-let binary (Y λf.λi.λacc.λbool_or_end.((#eq bool_or_end END) acc (f (succ i) (bool_or_end (+ acc (pow_2 i)) acc)))) 0 0
+[let binary
+    with pow_2 λn.(n double 1) in
+    (Y λf.λi.λacc.λbool_or_end.
+        (#eq bool_or_end END)
+        acc
+        (
+            f 
+            (succ i) // increment i
+            (bool_or_end (+ acc (pow_2 i)) acc) // update acc
+        )
+    )
+    0 0]
 
-assert_eq (binary true false true END) (+ 1 4)
+assert_eq (binary true false true true END) (1 | (+ 4) | (+ 8))
 ```

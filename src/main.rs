@@ -273,12 +273,32 @@ fn extract_from_markdown() -> Vec<String> {
 fn main() {
     let mut context = vec![];
 
-    for line in extract_from_markdown()
+    let extracted = extract_from_markdown();
+    let mut lines = extracted
         .iter()
-        .filter(|line| !line.starts_with("//") && line.len() > 0)
-        .map(|line| line.split("//").next().unwrap())
-    {
-        let mut words = line.split(&[' ', '\t']).peekable();
+        .map(|line| line.split("//").next().unwrap_or(""))
+        .filter(|line| line.trim().len() > 0);
+
+    loop {
+        let input = match lines.next() {
+            Some(line) => {
+                // Handle multiline statements with [ ]
+                if line.contains("[") {
+                    let mut joined = line.to_string().replace("[", "");
+                    while let Some(l) = lines.next() {
+                        joined = joined + "\n" + &l.replace("]", "");
+                        if l.contains("]") {
+                            break;
+                        }
+                    }
+                    joined
+                } else {
+                    line.to_string()
+                }
+            }
+            _ => break,
+        };
+        let mut words = input.split(&[' ', '\t']).peekable();
         match words.peek().unwrap() {
             &"let" => {
                 words.next();
@@ -291,7 +311,7 @@ fn main() {
                 println!();
                 println!("$   {}", input);
                 let mut expr = Expr::from_str(input).scoped(&context);
-                // println!("~   {}", expr);
+                // println!("~   {}", Expr::from_str(input));
                 expr.evaluate_lazy();
                 println!("=>  {}", expr.replace_from_context(&context));
 
