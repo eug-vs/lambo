@@ -14,7 +14,7 @@ fn match_reserved_token(c: char) -> Option<Token> {
     match c {
         '(' => Some(Token::OpenParen),
         ')' => Some(Token::CloseParen),
-        'λ' | '@' => Some(Token::Lambda),
+        'λ' | '@' | '\\' => Some(Token::Lambda),
         '.' => Some(Token::Dot),
         _ => None,
     }

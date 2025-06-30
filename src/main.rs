@@ -1,5 +1,8 @@
-use std::{fmt::Display, fs};
+use std::{fmt::Display, fs, io::stdin};
+
+use crate::runtime::IOMonad;
 mod parser;
+mod runtime;
 
 #[derive(Debug, Clone)]
 enum VariableKind {
@@ -124,24 +127,22 @@ impl Expr {
             }
         }
     }
-
-    fn handle_builtin_functions(
-        function: &Expr,
-        argument: &Expr,
-        side_effects: bool,
-    ) -> Option<Expr> {
+    fn handle_builtin_functions(function: &Expr, argument: &Expr) -> Option<Expr> {
         match function {
             // Beta-equivalence operator: #eq
             Expr::Call(operator, right) => {
                 match &**operator {
                     Expr::Var(var) => {
-                        if var.name == String::from("#eq") {
-                            // Compare beta-equivalence
-                            if right.evaluate_normal() == argument.evaluate_normal() {
-                                return Some(Self::TRUE());
-                            } else {
-                                return Some(Self::FALSE());
+                        match var.name.as_str() {
+                            "#eq" => {
+                                // Compare beta-equivalence
+                                if right.evaluate_normal() == argument.evaluate_normal() {
+                                    return Some(Self::TRUE());
+                                } else {
+                                    return Some(Self::FALSE());
+                                }
                             }
+                            _ => {}
                         }
                     }
                     _ => {}
@@ -149,17 +150,6 @@ impl Expr {
             }
             Expr::Var(var) => match var.name.as_str() {
                 "#compile" => return Some(argument.evaluate_normal()),
-                "#dump" => {
-                    if side_effects {
-                        println!("\nDump: {}\n", argument);
-                    }
-                    return Some(argument.clone());
-                }
-                "#throw" => {
-                    if side_effects {
-                        panic!("Throw: {}", argument);
-                    }
-                }
                 _ => {}
             },
             _ => {}
@@ -173,7 +163,7 @@ impl Expr {
             Expr::Call(func, argument) => {
                 let evaluated_func = func.evaluate_normal();
                 // disable side effects
-                match Self::handle_builtin_functions(&evaluated_func, &argument, false) {
+                match Self::handle_builtin_functions(&evaluated_func, &argument) {
                     Some(result) => return result,
                     None => {}
                 }
@@ -210,7 +200,7 @@ impl Expr {
         match self {
             Expr::Call(function, argument) => {
                 let evaluated_function = function.evaluate();
-                match Self::handle_builtin_functions(&evaluated_function, &argument, true) {
+                match Self::handle_builtin_functions(&evaluated_function, &argument) {
                     Some(result) => return result,
                     None => {}
                 }
@@ -334,6 +324,8 @@ fn main() {
                 // println!("~   {}", expr);
                 let result = expr.evaluate();
                 println!("=>  {}", result.replace_from_context(&context));
+                let runtime_result = IOMonad::from_expr(&result).unwrap();
+                println!("==> {}", runtime_result);
             }
         }
     }
