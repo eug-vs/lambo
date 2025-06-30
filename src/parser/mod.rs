@@ -8,7 +8,7 @@ mod parser;
 
 impl Expr {
     pub fn from_str(s: &str) -> Expr {
-        parse_expr(&mut lexer(s).peekable(), 0.0, vec![])
+        parse_expr(&mut lexer(s).peekable(), 0, vec![])
     }
 }
 

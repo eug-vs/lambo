@@ -2,11 +2,12 @@ use std::{iter::Peekable, panic};
 
 use crate::{Expr, Variable, VariableKind, parser::lexer::Token};
 
-type BindingPower = f32;
+type BindingPower = usize;
 
 fn binding_power(token: &Token) -> (BindingPower, BindingPower) {
     match token {
-        _ => (1.0, 1.1), // Everything is left-associative
+        Token::Pipe => (10, 11), // Very small binding power for pipe | operator
+        _ => (100, 101),         // Everything else is left-associative
     }
 }
 
@@ -41,7 +42,7 @@ pub fn parse_expr<I: Iterator<Item = Token>>(
             Expr::Lambda(variable_name.clone(), Box::new(body))
         }
         Token::OpenParen => {
-            let result = parse_expr(tokens, 0.0, ctx.clone());
+            let result = parse_expr(tokens, 0, ctx.clone());
             match tokens.next().unwrap() {
                 Token::CloseParen => {}
                 token => panic!("Expected CloseParen, got: {:?}", token),
@@ -59,8 +60,25 @@ pub fn parse_expr<I: Iterator<Item = Token>>(
         if l_bp < min_binding_power {
             break;
         }
+
+        // Clone to not lose the referenced object
+        let next_token = next_token.clone();
+
+        // Consume pipe token
+        match next_token {
+            Token::Pipe => {
+                tokens.next().unwrap();
+            }
+            _ => {}
+        };
+
         let rhs = parse_expr(tokens, r_bp, ctx.clone());
-        lhs = Expr::Call(Box::new(lhs), Box::new(rhs));
+
+        lhs = match next_token {
+            // Pipe swaps rhs and lhs: (value | f1 | f2) parses into (f2 (f1 value))
+            Token::Pipe => Expr::Call(Box::new(rhs), Box::new(lhs)),
+            _ => Expr::Call(Box::new(lhs), Box::new(rhs)),
+        };
     }
     lhs
 }

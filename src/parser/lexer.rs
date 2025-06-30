@@ -1,12 +1,13 @@
 use std::iter::{from_fn, once};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Token {
     Symbol(String),
     OpenParen,
     CloseParen,
     Lambda,
     Dot,
+    Pipe,
     Eof,
 }
 
@@ -16,6 +17,7 @@ fn match_reserved_token(c: char) -> Option<Token> {
         ')' => Some(Token::CloseParen),
         'λ' | '@' | '\\' => Some(Token::Lambda),
         '.' => Some(Token::Dot),
+        '|' => Some(Token::Pipe),
         _ => None,
     }
 }

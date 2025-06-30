@@ -168,7 +168,7 @@ let Y λf.(λx.f (x x)) (λx.f (x x))
 let fact Y (λf.λn.(= 0 n) 1 (* n (f (pred n))))
 
 assert_eq (fact 4) (+ 16 8)
-assert_eq (fact (succ 4)) (+ (+ (+ 64 32) 16) 8)
+assert_eq (fact (succ 4)) (64 | (+ 32) | (+ 16) | (+ 8))
 ```
 
 ## Runtime
@@ -207,7 +207,10 @@ let option_unwrap    λoption.option id (#io_throw EMPTY_OPTION)
 let option_unwrap_or λoption.λdefault.option id default
 
 assert_eq (option_map (some 0) succ) (some 1)
+
+// These 2 are equivalent
 assert_eq (option_unwrap (option_map (some 2) double)) 4
+assert_eq ((option_map (some 2) double) | option_unwrap) 4
 
 assert_eq (option_or none (some 1)) (some 1)
 assert_eq (option_or (some 2) (some 1)) (some 2)
@@ -230,7 +233,8 @@ let fold_stream λcombine.λinit.(Y λf.λacc.λoption.(option (\x.(f (combine x
 let stream_sum (fold_stream + 0)
 
 assert_eq (stream_sum none) 0
-assert_eq (stream_sum (some 4) (some 1) (some 2) (some 1) none) 8
+assert_eq (stream_sum (some 4) (some 1) (some 2) (some 1) none)  (4 | (+ 1) | (+ 2) | (+ 1))
+//                ^ real change of behavior                       ^ syntax sugar (x | f1 | f2) = (f2 (f1 x))
 ```
 
 ## Binary number constructor (wtf?)
