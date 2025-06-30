@@ -324,8 +324,15 @@ fn main() {
                 // println!("~   {}", expr);
                 let result = expr.evaluate();
                 println!("=>  {}", result.replace_from_context(&context));
-                let runtime_result = IOMonad::from_expr(&result).unwrap();
-                println!("==> {}", runtime_result);
+
+                match IOMonad::from_expr(&result) {
+                    Some(Ok(monad)) => match monad.unwrap() {
+                        Ok(runtime_result) => println!("==> {}", runtime_result),
+                        Err(msg) => println!("Runtime error: {}", msg),
+                    },
+                    Some(Err(msg)) => println!("Could not parse IO: {}", msg),
+                    None => {} // Not an IO, skipping runtime
+                }
             }
         }
     }

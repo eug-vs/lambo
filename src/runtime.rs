@@ -16,25 +16,36 @@ pub enum IOMonad {
 }
 
 impl IOMonad {
-    pub fn from_expr(expr: &Expr) -> Self {
+    /// Return type is Option<Result> because expression may not be a IO at all.
+    /// But if it is, it has to match IO semantics
+    pub fn from_expr(expr: &Expr) -> Option<Result<Self, String>> {
         match expr {
             Expr::Var(Variable { name, kind: _ }) if name == "#io_read" => {
-                return IOMonad::ReadLambda;
+                return Some(Ok(IOMonad::ReadLambda));
             }
             Expr::Call(func, argument) => match &**func {
                 Expr::Var(Variable { name, kind: _ }) if name == "#io_pure" => {
-                    return IOMonad::Pure(*argument.clone());
+                    return Some(Ok(IOMonad::Pure(*argument.clone())));
                 }
                 Expr::Var(Variable { name, kind: _ }) if name == "#io_print" => {
-                    return IOMonad::Print(*argument.clone());
+                    return Some(Ok(IOMonad::Print(*argument.clone())));
                 }
                 Expr::Var(Variable { name, kind: _ }) if name == "#io_throw" => {
-                    return IOMonad::Throw(*argument.clone());
+                    return Some(Ok(IOMonad::Throw(*argument.clone())));
                 }
                 Expr::Call(inner_func, inner_arg) => match &**inner_func {
                     Expr::Var(Variable { name, kind: _ }) if name == "#io_flatmap" => {
-                        let monad = IOMonad::from_expr(&inner_arg);
-                        return IOMonad::Flatmap(Box::new(monad), *argument.clone());
+                        return IOMonad::from_expr(&inner_arg).map_or(
+                            Some(Err(format!(
+                                "Arguments to #io_flatmap must be IO, got: {}",
+                                inner_arg
+                            ))),
+                            |result| {
+                                Some(result.map(|monad| {
+                                    IOMonad::Flatmap(Box::new(monad), *argument.clone())
+                                }))
+                            },
+                        );
                     }
                     _ => {}
                 },
@@ -42,16 +53,16 @@ impl IOMonad {
             },
             _ => {}
         }
-        // println!("WARN: implicitly falling back to #pure IO monad");
-        IOMonad::Pure(expr.clone())
+        None
     }
 
-    pub fn unwrap(&self) -> Expr {
+    /// Flatmapping can fail if provided transform function does not return IO
+    pub fn unwrap(&self) -> Result<Expr, String> {
         match self {
-            Self::Pure(expr) => expr.evaluate(),
+            Self::Pure(expr) => Ok(expr.evaluate()),
             Self::Print(expr) => {
                 println!("=>  {}", expr);
-                expr.evaluate()
+                Ok(expr.evaluate())
             }
             Self::Throw(expr) => {
                 panic!("{}", expr);
@@ -61,13 +72,17 @@ impl IOMonad {
                 stdout().flush().unwrap();
                 let mut s = String::new();
                 stdin().read_line(&mut s).unwrap();
-                Expr::from_str(&s).evaluate()
+                Ok(Expr::from_str(&s).evaluate())
             }
             Self::Flatmap(io, transform) => {
-                let unwrapped = io.unwrap();
+                let unwrapped = io.unwrap()?;
                 let transform_result =
                     Expr::Call(Box::new(transform.clone()), Box::new(unwrapped)).evaluate();
-                IOMonad::from_expr(&transform_result).unwrap()
+                IOMonad::from_expr(&transform_result)
+                    .unwrap_or(Err(format!(
+                        "Evaluated result is not an IO (this will be later checked at type level): {transform_result}"
+                    )))?
+                    .unwrap()
             }
         }
     }
