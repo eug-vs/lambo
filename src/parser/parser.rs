@@ -38,7 +38,7 @@ pub fn parse_expr<I: Iterator<Item = Token>>(
                 Token::Dot => {}
                 token => panic!("Expected DOT, got: {:?}", token),
             }
-            let body = parse_expr(tokens, min_binding_power, ctx.clone());
+            let body = parse_expr(tokens, 0, ctx.clone());
             Expr::Lambda(variable_name.clone(), Box::new(body))
         }
         Token::OpenParen => {
