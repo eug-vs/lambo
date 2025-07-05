@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AST Debugger</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/d3-graphviz/5.0.2/d3-graphviz.min.js"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 10px;
+            background: #fafafa;
+            font-size: 14px;
+        }
+        #graph {
+            border: 1px solid #ddd;
+            background: white;
+            border-radius: 4px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        .toolbar {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 10px;
+            padding: 8px;
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        .file-input input[type="file"] {
+            display: none;
+        }
+        .file-input label {
+            background: #007acc;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 13px;
+        }
+        .file-input label:hover {
+            background: #005a9e;
+        }
+        button {
+            background: #f5f5f5;
+            color: #333;
+            border: 1px solid #ccc;
+            padding: 6px 12px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 13px;
+        }
+        button:hover:not(:disabled) {
+            background: #e8e8e8;
+        }
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .step-controls {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        #stepInput {
+            width: 60px;
+            padding: 4px 6px;
+            border: 1px solid #ccc;
+            border-radius: 3px;
+            font-size: 13px;
+        }
+        .step-info {
+            color: #666;
+            font-size: 13px;
+            margin-left: auto;
+        }
+        .playing {
+            background: #dc3545 !important;
+            color: white !important;
+        }
+        .playing:hover {
+            background: #c82333 !important;
+        }
+    </style>
+</head>
+<body>
+    <div class="toolbar">
+        <div class="file-input">
+            <input type="file" id="fileInput" multiple accept=".dot" />
+            <label for="fileInput">Load .dot files</label>
+        </div>
+        
+        <div class="step-controls">
+            <button id="prevBtn" disabled>◀</button>
+            <button id="nextBtn" disabled>▶</button>
+            <span>Step:</span>
+            <input type="number" id="stepInput" min="1" disabled />
+            <button id="playBtn" disabled>Play</button>
+        </div>
+        
+        <div class="step-info">
+            <span id="fileCount">No files loaded</span>
+        </div>
+    </div>
+    
+    <div id="graph"></div>
+
+    <script>
+        let dotStrings = [];
+        let currentIndex = 0;
+        let autoInterval = null;
+        
+        // Initialize the graphviz renderer
+        const graphviz = d3.select("#graph").graphviz()
+            .transition(function () {
+                return d3.transition("main")
+                    .ease(d3.easeLinear)
+                    .duration(500);
+            });
+
+        // Update step counter and input
+        function updateStepCounter() {
+            const stepInput = document.getElementById('stepInput');
+            if (dotStrings.length > 0) {
+                stepInput.value = currentIndex + 1;
+                stepInput.max = dotStrings.length;
+            } else {
+                stepInput.value = '';
+                stepInput.max = 0;
+            }
+        }
+
+        // Update file count display
+        function updateFileCount(count) {
+            const fileCount = document.getElementById('fileCount');
+            if (count === 0) {
+                fileCount.textContent = 'No files loaded';
+            } else {
+                fileCount.textContent = `${count} step${count > 1 ? 's' : ''} loaded`;
+            }
+        }
+
+        // Jump to specific step
+        function jumpToStep(step) {
+            if (step >= 1 && step <= dotStrings.length) {
+                currentIndex = step - 1;
+                renderCurrentGraph();
+            }
+        }
+
+        // Render current graph
+        function renderCurrentGraph() {
+            if (dotStrings.length === 0) return;
+            graphviz.renderDot(dotStrings[currentIndex]);
+            updateStepCounter();
+            updateButtons();
+        }
+
+        // Update button states
+        function updateButtons() {
+            const hasFiles = dotStrings.length > 0;
+            document.getElementById('prevBtn').disabled = !hasFiles || currentIndex === 0;
+            document.getElementById('nextBtn').disabled = !hasFiles || currentIndex === dotStrings.length - 1;
+            document.getElementById('playBtn').disabled = !hasFiles || dotStrings.length < 2;
+            document.getElementById('stepInput').disabled = !hasFiles;
+        }
+
+        // Toggle play/stop
+        function togglePlayback() {
+            const playBtn = document.getElementById('playBtn');
+            
+            if (autoInterval) {
+                // Stop playing
+                clearInterval(autoInterval);
+                autoInterval = null;
+                playBtn.textContent = 'Play';
+                playBtn.classList.remove('playing');
+            } else {
+                // Start playing
+                autoInterval = setInterval(function() {
+                    if (currentIndex < dotStrings.length - 1) {
+                        currentIndex++;
+                        renderCurrentGraph();
+                    } else {
+                        // Stop at the end, don't loop
+                        togglePlayback();
+                    }
+                }, 600);
+                playBtn.textContent = 'Stop';
+                playBtn.classList.add('playing');
+            }
+        }
+
+        // File input handler
+        document.getElementById('fileInput').addEventListener('change', async function(e) {
+            const files = Array.from(e.target.files);
+            if (files.length === 0) return;
+
+            try {
+                // Sort files by name for consistent ordering
+                files.sort((a, b) => a.name.localeCompare(b.name));
+                
+                dotStrings = [];
+                currentIndex = 0;
+                
+                // Read all files
+                for (const file of files) {
+                    const content = await readFileContent(file);
+                    if (content.trim()) {
+                        dotStrings.push(content);
+                    }
+                }
+                
+                updateFileCount(dotStrings.length);
+                updateStepCounter();
+                updateButtons();
+                
+                // Render first graph if available
+                if (dotStrings.length > 0) {
+                    renderCurrentGraph();
+                }
+                
+            } catch (error) {
+                alert('Error reading files: ' + error.message);
+            }
+        });
+
+        // Helper function to read file content
+        function readFileContent(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = e => resolve(e.target.result);
+                reader.onerror = e => reject(new Error('Failed to read file'));
+                reader.readAsText(file);
+            });
+        }
+
+        // Event handlers
+        document.getElementById('nextBtn').addEventListener('click', function() {
+            if (currentIndex < dotStrings.length - 1) {
+                currentIndex++;
+                renderCurrentGraph();
+            }
+        });
+
+        document.getElementById('prevBtn').addEventListener('click', function() {
+            if (currentIndex > 0) {
+                currentIndex--;
+                renderCurrentGraph();
+            }
+        });
+
+        document.getElementById('playBtn').addEventListener('click', togglePlayback);
+
+        document.getElementById('stepInput').addEventListener('change', function() {
+            const step = parseInt(this.value);
+            if (!isNaN(step)) {
+                jumpToStep(step);
+            }
+        });
+
+        document.getElementById('stepInput').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                const step = parseInt(this.value);
+                if (!isNaN(step)) {
+                    jumpToStep(step);
+                }
+            }
+        });
+
+        // Initialize
+        updateStepCounter();
+        updateFileCount(0);
+        updateButtons();
+    </script>
+</body>
+</html>

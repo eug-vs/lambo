@@ -10,6 +10,7 @@ pub enum Token {
     Pipe,
     With,
     In,
+    Colon,
     Eof,
 }
 
@@ -20,6 +21,7 @@ fn match_single_char_token(c: char) -> Option<Token> {
         'λ' | '@' | '\\' => Some(Token::Lambda),
         '.' => Some(Token::Dot),
         '|' => Some(Token::Pipe),
+        ':' => Some(Token::Colon),
         _ => None,
     }
 }

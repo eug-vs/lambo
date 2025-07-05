@@ -1,47 +1,60 @@
-use std::{fmt::Display, fs};
+use std::{
+    fmt::Display,
+    fs,
+    hash::{DefaultHasher, Hash, Hasher},
+    mem,
+};
 
-use crate::runtime::IOMonad;
+use crate::{
+    evaluator::{EvaluationOrder, Graph},
+    runtime::IOMonad,
+};
+mod evaluator;
 mod parser;
 mod runtime;
 
 #[derive(Debug, Clone)]
 enum VariableKind {
     /// Represents a De Brujin index
-    Bound(usize),
+    Bound {
+        depth: usize,
+    },
     Free,
 }
 
 #[derive(Debug, Clone)]
-struct Variable {
-    name: String,
-    kind: VariableKind,
-}
-
-impl Display for Variable {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.name)
-    }
-}
-
-#[derive(Debug, Clone)]
 enum Expr {
-    Var(Variable),
-    Lambda(String, Box<Expr>),
-    Call(Box<Expr>, Box<Expr>),
+    Var {
+        name: String,
+        kind: VariableKind,
+    },
+    Lambda {
+        argument: String,
+        body: Box<Expr>,
+    },
+    Call {
+        function: Box<Expr>,
+        parameter: Box<Expr>,
+    },
 }
 
 impl Display for Expr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Expr::Var(name) => write!(f, "{}", name),
-            Expr::Lambda(argument, body) => {
-                write!(f, "λ{}.", argument)?;
+            Expr::Var { name, .. } => write!(f, "{}", name),
+            Expr::Lambda { argument, body, .. } => {
+                write!(f, "λ{}", argument)?;
+                write!(f, ".")?;
                 body.fmt(f)
             }
-            Expr::Call(function, argument) => {
+            Expr::Call {
+                function,
+                parameter,
+                ..
+            } => {
                 write!(f, "(")?;
-                match **function {
-                    Expr::Lambda(_, _) => {
+                match &**function {
+                    Expr::Lambda { .. } => {
                         write!(f, "(")?;
                         function.fmt(f)?;
                         write!(f, ")")?;
@@ -52,7 +65,7 @@ impl Display for Expr {
 
                 // We can avoid wrapping argument in (),
                 // even if it's a Lambda, because closing paren follows anyway
-                argument.fmt(f)?;
+                parameter.fmt(f)?;
                 write!(f, ")")
             }
         }
@@ -61,15 +74,24 @@ impl Display for Expr {
 impl Expr {
     fn fmt_de_brujin(&self) -> String {
         match self {
-            Expr::Var(variable) => match variable.kind {
-                VariableKind::Free => format!("{}", variable.name),
-                VariableKind::Bound(depth) => format!("{}", depth),
-            },
-            Expr::Lambda(_argument, body) => format!("λ {}", body.fmt_de_brujin()),
-            Expr::Call(function, argument) => format!(
+            Expr::Var {
+                name,
+                kind: VariableKind::Free,
+                ..
+            } => format!("{}", name),
+            Expr::Var {
+                kind: VariableKind::Bound { depth, .. },
+                ..
+            } => format!("{}", depth),
+            Expr::Lambda { body, .. } => format!("λ {}", body.fmt_de_brujin()),
+            Expr::Call {
+                function,
+                parameter,
+                ..
+            } => format!(
                 "({} {})",
                 function.fmt_de_brujin(),
-                argument.fmt_de_brujin()
+                parameter.fmt_de_brujin()
             ),
         }
     }
@@ -99,126 +121,30 @@ impl Expr {
         let formatted = format!("(@{variable_name}.{self}) {value}");
         Self::from_str(&formatted)
     }
-    /// Performs an adjustment to variables' depths.
-    /// Always call with `cutoff=1` initially
-    fn adjust_depth(&mut self, cutoff: usize, by: isize) {
-        match self {
-            Expr::Var(var) => match var.kind {
-                VariableKind::Bound(d) => {
-                    if d >= cutoff {
-                        var.kind = VariableKind::Bound(((d as isize) + by) as usize);
-                    }
-                }
-                _ => {}
+    // AKA apply
+    fn evaluate(&mut self) {
+        let debug_path = {
+            let mut hasher = DefaultHasher::new();
+            self.fmt_de_brujin().hash(&mut hasher);
+            let hash = hasher.finish();
+            format!("./debug/{}", hash)
+        };
+
+        // Get ownership of Expr, temporarily replacing &self with dummy value
+        let expr = mem::replace(
+            self,
+            Expr::Var {
+                name: "#evaluate_in_progress".to_string(),
+                kind: VariableKind::Free,
             },
-            Expr::Lambda(_, body) => {
-                body.adjust_depth(cutoff + 1, by);
-            }
-            Expr::Call(func, arg) => {
-                func.adjust_depth(cutoff, by);
-                arg.adjust_depth(cutoff, by);
-            }
-        }
-    }
-    fn handle_builtin_functions(function: &mut Expr, argument: &mut Expr) -> Option<Expr> {
-        match function {
-            // Beta-equivalence operator: #eq
-            Expr::Call(operator, right) => {
-                match &**operator {
-                    Expr::Var(var) => {
-                        match var.name.as_str() {
-                            "#eq" => {
-                                // Compare beta-equivalence
-                                right.evaluate_normal();
-                                argument.evaluate_normal();
-                                if **right == *argument {
-                                    return Some(Self::TRUE());
-                                } else {
-                                    return Some(Self::FALSE());
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                    _ => {}
-                };
-            }
-            Expr::Var(var) => match var.name.as_str() {
-                _ => {}
-            },
-            _ => {}
-        }
-        None
-    }
-    fn evaluate_normal(&mut self) {
-        self.evaluate(false);
+        );
+        let mut graph = Graph::from_expr(expr, false);
+        graph.evaluate(graph.root, EvaluationOrder::Lazy);
+        graph.dump_debug_frames(&debug_path);
+
+        *self = graph.to_expr(graph.root);
     }
 
-    fn evaluate_lazy(&mut self) {
-        self.evaluate(true);
-    }
-
-    /// Evaluate expression using Non-Strict Order strategy (Call by Name, aka Lazy)
-    fn evaluate(&mut self, lazy: bool) {
-        match self {
-            Expr::Call(function, argument) => {
-                function.evaluate(lazy);
-                match Self::handle_builtin_functions(function, argument) {
-                    Some(result) => {
-                        *self = result;
-                        return;
-                    }
-                    None => {}
-                }
-                match &mut **function {
-                    Expr::Lambda(_arg, body) => {
-                        let mut argument = argument.clone();
-                        argument.adjust_depth(1, 1);
-                        body.substitute(*argument, 1);
-                        body.adjust_depth(1, -1);
-                        body.evaluate(lazy);
-                        *self = *body.clone();
-                        return;
-                    }
-                    Expr::Var(_) => {
-                        argument.evaluate(lazy);
-                        return;
-                    }
-                    // Call is no longer reducible, already in normal form
-                    _ => {}
-                }
-            }
-            // Since we are doing "Call by Name" evaluation, we do not collapse Lambda body, i.e
-            // λx.(SOME_HARD_TO_COMPUTE_FUNCTION)
-            // will not get evaluated until it's actually called
-            Expr::Lambda(_, body) => {
-                if !lazy {
-                    body.evaluate(lazy);
-                }
-            }
-            _ => {}
-        }
-    }
-    fn substitute(&mut self, mut with: Expr, at_depth: usize) {
-        match self {
-            Expr::Var(var) => match var.kind {
-                VariableKind::Bound(d) => {
-                    if d == at_depth {
-                        *self = with.clone();
-                    }
-                }
-                _ => {}
-            },
-            Expr::Lambda(_, body) => {
-                with.adjust_depth(1, 1);
-                body.substitute(with, at_depth + 1);
-            }
-            Expr::Call(func, arg) => {
-                func.substitute(with.clone(), at_depth);
-                arg.substitute(with, at_depth);
-            }
-        }
-    }
     fn scoped(&self, context: &Vec<(String, Expr)>) -> Expr {
         // TODO: only include functions from context that are actually used
         context
@@ -231,23 +157,25 @@ impl Expr {
     fn replace_from_context(&self, context: &Vec<(String, Expr)>) -> Expr {
         for (name, value) in context {
             if value == self {
-                return Expr::Var(Variable {
+                return Expr::Var {
                     name: name.clone(),
                     kind: VariableKind::Free,
-                });
+                };
             }
         }
         match self {
-            Expr::Lambda(arg, body) => {
-                let new_body = body.replace_from_context(context);
-                Expr::Lambda(arg.clone(), Box::new(new_body))
-            }
-            Expr::Call(func, arg) => {
-                let func = func.replace_from_context(context);
-                let arg = arg.replace_from_context(context);
-                Expr::Call(Box::new(func), Box::new(arg))
-            }
-            Expr::Var(_) => self.clone(),
+            Expr::Lambda { body, argument } => Expr::Lambda {
+                argument: argument.to_string(),
+                body: Box::new(body.replace_from_context(context)),
+            },
+            Expr::Call {
+                function,
+                parameter,
+            } => Expr::Call {
+                function: Box::new(function.replace_from_context(context)),
+                parameter: Box::new(parameter.replace_from_context(context)),
+            },
+            Expr::Var { .. } => self.clone(),
         }
     }
 }
@@ -311,8 +239,8 @@ fn main() {
                 println!();
                 println!("$   {}", input);
                 let mut expr = Expr::from_str(input).scoped(&context);
-                // println!("~   {}", Expr::from_str(input));
-                expr.evaluate_lazy();
+                // println!("~   {:?}", expr);
+                expr.evaluate();
                 println!("=>  {}", expr.replace_from_context(&context));
 
                 match IOMonad::from_expr(&expr) {

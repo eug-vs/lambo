@@ -1,6 +1,6 @@
 use std::io::{Write, stdin, stdout};
 
-use crate::{Expr, Variable};
+use crate::Expr;
 
 pub enum IOMonad {
     /// An arbitrary expression lifted into IO
@@ -21,32 +21,40 @@ impl IOMonad {
     /// But if it is, it has to match IO semantics
     pub fn from_expr(expr: &Expr) -> Option<Result<Self, String>> {
         match expr {
-            Expr::Var(Variable { name, kind: _ }) if name == "#io_read" => {
+            Expr::Var { name, .. } if name == "#io_read" => {
                 return Some(Ok(IOMonad::ReadLambda));
             }
-            Expr::Call(func, argument) => match &**func {
-                Expr::Var(Variable { name, kind: _ }) if name == "#io_pure" => {
-                    return Some(Ok(IOMonad::Pure(*argument.clone())));
+            Expr::Call {
+                function,
+                parameter,
+                ..
+            } => match &**function {
+                Expr::Var { name, .. } if name == "#io_pure" => {
+                    return Some(Ok(IOMonad::Pure(*parameter.clone())));
                 }
-                Expr::Var(Variable { name, kind: _ }) if name == "#io_print" => {
-                    return Some(Ok(IOMonad::Print(*argument.clone())));
+                Expr::Var { name, .. } if name == "#io_print" => {
+                    return Some(Ok(IOMonad::Print(*parameter.clone())));
                 }
-                Expr::Var(Variable { name, kind: _ }) if name == "#io_dbg" => {
-                    return Some(Ok(IOMonad::Debug(*argument.clone())));
+                Expr::Var { name, .. } if name == "#io_dbg" => {
+                    return Some(Ok(IOMonad::Debug(*parameter.clone())));
                 }
-                Expr::Var(Variable { name, kind: _ }) if name == "#io_throw" => {
-                    return Some(Ok(IOMonad::Throw(*argument.clone())));
+                Expr::Var { name, .. } if name == "#io_throw" => {
+                    return Some(Ok(IOMonad::Throw(*parameter.clone())));
                 }
-                Expr::Call(inner_func, inner_arg) => match &**inner_func {
-                    Expr::Var(Variable { name, kind: _ }) if name == "#io_flatmap" => {
-                        return IOMonad::from_expr(&inner_arg).map_or(
+                Expr::Call {
+                    function: inner_function,
+                    parameter: inner_parameter,
+                    ..
+                } => match &**inner_function {
+                    Expr::Var { name, .. } if name == "#io_flatmap" => {
+                        return IOMonad::from_expr(&inner_parameter).map_or(
                             Some(Err(format!(
                                 "Arguments to #io_flatmap must be IO, got: {}",
-                                inner_arg
+                                inner_parameter
                             ))),
                             |result| {
                                 Some(result.map(|monad| {
-                                    IOMonad::Flatmap(Box::new(monad), *argument.clone())
+                                    IOMonad::Flatmap(Box::new(monad), *inner_parameter.clone())
                                 }))
                             },
                         );
@@ -64,21 +72,21 @@ impl IOMonad {
     pub fn unwrap(&mut self) -> Result<Expr, String> {
         match self {
             Self::Pure(expr) => {
-                expr.evaluate_lazy();
+                expr.evaluate();
                 Ok(expr.clone())
             }
             Self::Print(expr) => {
-                expr.evaluate_lazy();
+                expr.evaluate();
                 println!("=>  {}", expr);
                 Ok(expr.clone())
             }
             Self::Debug(expr) => {
-                expr.evaluate_lazy();
+                expr.evaluate();
                 println!("=>  {}", expr.fmt_de_brujin());
                 Ok(expr.clone())
             }
             Self::Throw(expr) => {
-                expr.evaluate_lazy();
+                expr.evaluate();
                 panic!("{}", expr);
             }
             Self::ReadLambda => {
@@ -87,14 +95,16 @@ impl IOMonad {
                 let mut s = String::new();
                 stdin().read_line(&mut s).unwrap();
                 let mut expr = Expr::from_str(&s);
-                expr.evaluate_lazy();
+                expr.evaluate();
                 Ok(expr)
             }
             Self::Flatmap(io, transform) => {
                 let unwrapped = io.unwrap()?;
-                let mut transform_result =
-                    Expr::Call(Box::new(transform.clone()), Box::new(unwrapped));
-                transform_result.evaluate_lazy();
+                let mut transform_result = Expr::Call {
+                    function: Box::new(transform.clone()),
+                    parameter: Box::new(unwrapped),
+                };
+                transform_result.evaluate();
                 IOMonad::from_expr(&transform_result)
                     .unwrap_or(Err(format!(
                         "Evaluated result is not an IO (this will be later checked at type level): {transform_result}"

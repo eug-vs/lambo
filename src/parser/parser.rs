@@ -1,6 +1,6 @@
 use std::{iter::Peekable, panic};
 
-use crate::{Expr, Variable, VariableKind, parser::lexer::Token};
+use crate::{Expr, VariableKind, parser::lexer::Token};
 
 type BindingPower = usize;
 
@@ -20,26 +20,41 @@ pub fn parse_expr<I: Iterator<Item = Token>>(
     let mut lhs = match tokens.next().unwrap() {
         Token::Symbol(name) => {
             let kind = match ctx.iter().rev().position(|n| *n == name) {
-                Some(depth) => VariableKind::Bound(depth + 1), // Just to avoid 0, purely sugar
+                Some(depth) => VariableKind::Bound {
+                    depth: depth + 1, // Just to avoid 0, purely sugar
+                },
                 None => VariableKind::Free,
             };
-            Expr::Var(Variable {
+            Expr::Var {
                 name: name.clone(),
                 kind,
-            })
+            }
         }
         Token::Lambda => {
             let variable_name = match tokens.next() {
                 Some(Token::Symbol(name)) => name,
                 token => panic!("Expected variable name, got: {:?}", token),
             };
-            ctx.push(variable_name.clone());
+            match tokens.peek() {
+                Some(Token::Colon) => {
+                    tokens.next(); // Consume :
+                    match tokens.next() {
+                        Some(Token::Symbol(_type_name)) => {} // TODO: do something with type
+                        token => panic!("Expected type, got: {:?}", token),
+                    };
+                }
+                _ => {} // TODO: Default to any type
+            };
             match tokens.next() {
                 Some(Token::Dot) => {}
                 token => panic!("Expected DOT, got: {:?}", token),
             }
+            ctx.push(variable_name.clone());
             let body = parse_expr(tokens, 0, ctx.clone());
-            Expr::Lambda(variable_name.clone(), Box::new(body))
+            Expr::Lambda {
+                argument: variable_name,
+                body: Box::new(body),
+            }
         }
         Token::OpenParen => {
             let result = parse_expr(tokens, 0, ctx.clone());
@@ -77,9 +92,9 @@ pub fn parse_expr<I: Iterator<Item = Token>>(
         // Clone to not lose the referenced object
         let next_token = next_token.clone();
 
-        // Consume pipe token
+        // Some tokens we have to consume
         match next_token {
-            Token::Pipe => {
+            Token::Pipe | Token::Colon => {
                 tokens.next().unwrap();
             }
             _ => {}
@@ -89,8 +104,14 @@ pub fn parse_expr<I: Iterator<Item = Token>>(
 
         lhs = match next_token {
             // Pipe swaps rhs and lhs: (value | f1 | f2) parses into (f2 (f1 value))
-            Token::Pipe => Expr::Call(Box::new(rhs), Box::new(lhs)),
-            _ => Expr::Call(Box::new(lhs), Box::new(rhs)),
+            Token::Pipe => Expr::Call {
+                function: Box::new(rhs),
+                parameter: Box::new(lhs),
+            },
+            _ => Expr::Call {
+                function: Box::new(lhs),
+                parameter: Box::new(rhs),
+            },
         };
     }
     lhs
