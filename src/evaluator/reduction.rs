@@ -94,7 +94,7 @@ impl Graph {
             ]));
         }
 
-        for (var_id, lambdas_gained_from_root) in self
+        let substitution_targets = self
             .traverse_subtree(expr)
             .filter(|&(id, lambdas_gained_from_root)| {
                 matches!(
@@ -108,9 +108,15 @@ impl Graph {
                         == 1
                 )
             })
-            .collect::<Vec<_>>()
+            .collect::<Vec<_>>();
+
+        for (index, &(var_id, lambdas_gained_from_root)) in substitution_targets.iter().enumerate()
         {
-            let new_id = self.clone_subtree(with);
+            let new_id = if index < substitution_targets.len() - 1 {
+                self.clone_subtree(with)
+            } else {
+                with // No need to clone the last target
+            };
             self.graph[var_id] = mem::replace(
                 &mut self.graph[new_id],
                 Node::Consumed("In substitution".to_string()),
