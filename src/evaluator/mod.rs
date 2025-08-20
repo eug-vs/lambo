@@ -10,9 +10,23 @@ mod reduction;
 
 #[derive(Debug, Clone)]
 enum Node {
-    Var { name: String, kind: VariableKind },
-    Lambda { argument: String, body: usize },
-    Call { function: usize, parameter: usize },
+    Var {
+        name: String,
+        kind: VariableKind,
+    },
+    Lambda {
+        argument: String,
+        body: usize,
+    },
+    Call {
+        function: usize,
+        parameter: usize,
+    },
+    Thunk {
+        node: usize,
+        /// Depth adjustment for free variables within subtree
+        depth_adjustment: isize,
+    },
     Consumed(String),
 }
 
@@ -77,7 +91,7 @@ impl Graph {
     }
 
     pub fn to_expr(&mut self, id: usize) -> Expr {
-        let node = mem::replace(&mut self.graph[id], Node::Consumed("to_expr".to_string()));
+        let node = self.graph[id].clone();
         match node {
             Node::Var { name, kind } => Expr::Var { name, kind },
             Node::Lambda { argument, body } => Expr::Lambda {
@@ -92,11 +106,13 @@ impl Graph {
                 parameter: Box::new(self.to_expr(parameter)),
             },
             Node::Consumed(_) => self.panic_consumed_node(id),
+            Node::Thunk { node, .. } => self.to_expr(node), // WARN: probably incorrect
         }
     }
 
     fn panic_consumed_node(&self, id: usize) -> ! {
         self.dump_debug_frames("./error");
+        dbg!(&self.graph[id]);
         panic!("Tried to access a dead node: {id}");
     }
 }

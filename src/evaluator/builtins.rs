@@ -10,7 +10,9 @@ impl Graph {
         self.add_expr_to_graph(if value { Expr::TRUE() } else { Expr::FALSE() })
     }
 
-    fn is_alpha_equivalent(&self, left: usize, right: usize) -> bool {
+    fn is_alpha_equivalent(&self, mut left: usize, mut right: usize) -> bool {
+        left = self.jump_through_thunks(left);
+        right = self.jump_through_thunks(right);
         match &self.graph[left] {
             Node::Var {
                 name: left_name,
@@ -57,6 +59,7 @@ impl Graph {
                 _ => false,
             },
             Node::Consumed(_) => self.panic_consumed_node(left),
+            Node::Thunk { .. } => unreachable!("thunks have been resolved"),
         }
     }
 
@@ -65,11 +68,11 @@ impl Graph {
             Node::Call {
                 function,
                 parameter: right,
-            } => match self.graph[function] {
+            } => match self.graph[self.jump_through_thunks(function)] {
                 Node::Call {
                     function,
                     parameter: left,
-                } => match &self.graph[function] {
+                } => match &self.graph[self.jump_through_thunks(function)] {
                     Node::Var {
                         name,
                         kind: VariableKind::Free,

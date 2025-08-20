@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::iter::{from_fn, once};
 use std::mem;
 
@@ -20,6 +21,7 @@ impl Graph {
                 *function = self.clone_subtree(*function);
                 *parameter = self.clone_subtree(*parameter);
             }
+            Node::Thunk { node, .. } => *node = self.clone_subtree(*node),
             _ => unreachable!("{:?}", node),
         };
         self.graph.push(node);
@@ -28,8 +30,12 @@ impl Graph {
 
     /// WARN: since this function borrows &self, you need to collect the output first
     /// Filtering the output before collect (rather then after) will improve performance
-    pub fn traverse_subtree(&self, root: usize) -> impl Iterator<Item = (usize, usize)> {
-        let mut stack = vec![(root, 0)];
+    pub fn traverse_subtree(
+        &self,
+        root: usize,
+        visit_thunks: bool,
+    ) -> impl Iterator<Item = (usize, usize)> {
+        let mut stack = vec![(root, 0 as usize)];
 
         from_fn(move || {
             let (node, lambda_depth_to_root) = stack.pop()?;
@@ -44,58 +50,71 @@ impl Graph {
                     stack.push((function, lambda_depth_to_root));
                     stack.push((parameter, lambda_depth_to_root));
                 }
+                Node::Thunk {
+                    node,
+                    depth_adjustment,
+                } => {
+                    if visit_thunks {
+                        stack.push((
+                            node,
+                            ((lambda_depth_to_root as isize) - depth_adjustment)
+                                .try_into()
+                                .unwrap_or_default(),
+                        ));
+                    }
+                }
                 _ => {}
             };
             Some((node, lambda_depth_to_root))
         })
     }
 
-    fn locally_free_variables(&self, expr: usize) -> Vec<usize> {
-        self.traverse_subtree(expr)
-            .filter(|&(id, lambdas_gained_from_root)| {
-                matches!(
-                    self.graph[id],
-                    Node::Var {
-                        kind: VariableKind::Bound { depth },
-                        ..
-                    } if depth > lambdas_gained_from_root
-                )
-            })
-            .map(|(id, _)| id)
-            .collect::<Vec<_>>()
-    }
-
     /// Finds **locally free** variables in the subtree and
     /// adjusts their depth by some amount, usually after losing/gaining a binder
-    fn adjust_depth(&mut self, expr: usize, by: isize) {
-        let locally_free_variables = self.locally_free_variables(expr);
+    fn adjust_for_lost_binder(&mut self, expr: usize) {
+        let traversed = self.traverse_subtree(expr, false).collect::<HashSet<_>>();
 
-        if self.debug {
-            let msg = format!("adjusting depth here by {by}");
-            self.add_debug_frame(if locally_free_variables.is_empty() {
-                vec![(expr, "No need to adjust depth")]
-            } else {
-                locally_free_variables
-                    .iter()
-                    .map(|&id| (id, msg.as_str()))
-                    .collect()
-            });
-        }
+        // if self.debug {
+        //     let msg = format!("adjusting depth here");
+        //     self.add_debug_frame(if locally_free_variables.is_empty() {
+        //         vec![(expr, "No need to adjust depth")]
+        //     } else {
+        //         locally_free_variables
+        //             .iter()
+        //             .map(|&id| (id, msg.as_str()))
+        //             .collect()
+        //     });
+        // }
 
-        for var_id in locally_free_variables {
+        for (var_id, lambda_depth_to_root) in traversed {
             match &mut self.graph[var_id] {
                 Node::Var {
                     kind: VariableKind::Bound { depth },
                     ..
-                } => *depth = (*depth as isize + by) as usize,
-                _ => unreachable!(),
+                } if *depth > lambda_depth_to_root => *depth -= 1,
+                Node::Thunk {
+                    depth_adjustment, ..
+                } => {
+                    if *depth_adjustment > 0 {
+                        *depth_adjustment -= 1;
+                    }
+                    if *depth_adjustment < 0 {
+                        self.add_debug_frame(vec![(var_id, "depth adjustment wrong")]);
+                        self.panic_consumed_node(var_id);
+                    }
+                    assert!(
+                        *depth_adjustment >= 0,
+                        "Depth adjustment can't be less then 0"
+                    );
+                }
+                _ => {}
             }
         }
     }
 
-    fn substitute(&mut self, expr: usize, with: usize) {
+    fn substitute(&mut self, lambda_body: usize, with: usize) {
         let substitution_targets = self
-            .traverse_subtree(expr)
+            .traverse_subtree(lambda_body, true)
             .filter(|&(id, lambdas_gained_from_root)| {
                 matches!(
                     self.graph[id],
@@ -108,11 +127,11 @@ impl Graph {
                         == 1
                 )
             })
-            .collect::<Vec<_>>();
+            .collect::<HashSet<_>>();
 
         if self.debug {
             self.add_debug_frame(if substitution_targets.is_empty() {
-                vec![(expr, "no substitution targets in this subtree")]
+                vec![(lambda_body, "no substitution targets in this subtree")]
             } else {
                 substitution_targets
                     .iter()
@@ -122,18 +141,20 @@ impl Graph {
             });
         }
 
-        for (index, &(var_id, lambdas_gained_from_root)) in substitution_targets.iter().enumerate()
-        {
-            let new_id = if index < substitution_targets.len() - 1 {
-                self.clone_subtree(with)
-            } else {
-                with // No need to clone the last target
+        for (var_id, lambdas_gained_from_root) in substitution_targets {
+            let mut thunk = Node::Thunk {
+                node: with,
+                depth_adjustment: (lambdas_gained_from_root as isize) + 1, // TODO: seems to work without + 1
             };
-            self.graph[var_id] = mem::replace(
-                &mut self.graph[new_id],
-                Node::Consumed("In substitution".to_string()),
-            );
-            self.adjust_depth(var_id, (lambdas_gained_from_root + 1) as isize);
+            self.graph[var_id] =
+                mem::replace(&mut thunk, Node::Consumed("In substitution".to_string()));
+        }
+    }
+
+    pub fn jump_through_thunks(&self, expr: usize) -> usize {
+        match self.graph[expr] {
+            Node::Thunk { node, .. } => self.jump_through_thunks(node),
+            _ => expr,
         }
     }
 
@@ -144,7 +165,7 @@ impl Graph {
         match self.graph[expr] {
             Node::Var { .. } => {}
             Node::Call {
-                function,
+                mut function,
                 parameter,
             } => {
                 // Convert functon to WNHF first
@@ -156,6 +177,15 @@ impl Graph {
                 if self.handle_builtins(expr) {
                     return;
                 };
+
+                {
+                    let subtree_under_thunks = self.jump_through_thunks(function);
+                    if subtree_under_thunks != function {
+                        function = self.clone_subtree(subtree_under_thunks);
+                    }
+                }
+
+                self.add_debug_frame(vec![(function, "after resolve thunks")]);
 
                 match self.graph[function] {
                     Node::Var { .. } => self.evaluate(parameter, order),
@@ -174,7 +204,7 @@ impl Graph {
                             Node::Consumed("evaluate_lambda_body".to_string()),
                         );
                         self.substitute(expr, parameter);
-                        self.adjust_depth(expr, -1);
+                        self.adjust_for_lost_binder(expr);
                         if self.debug {
                             self.add_debug_frame(vec![(expr, "after substitute")]);
                         }
@@ -182,6 +212,7 @@ impl Graph {
                         self.evaluate(expr, order);
                     }
                     Node::Consumed(_) => self.panic_consumed_node(function),
+                    Node::Thunk { .. } => self.panic_consumed_node(function),
                 }
             }
             Node::Lambda { body, .. } => match order {
@@ -194,6 +225,7 @@ impl Graph {
                 _ => {}
             },
             Node::Consumed(_) => self.panic_consumed_node(expr),
+            Node::Thunk { node, .. } => self.evaluate(node, order),
         }
     }
 }

@@ -53,6 +53,13 @@ impl Graph {
                         writeln!(result, "{id} [label=\"{id}: var {name} ({depth}) \"]").unwrap()
                     }
                 },
+                Node::Thunk {
+                    node,
+                    depth_adjustment,
+                } => {
+                    writeln!(result, "{id} [label=\"{id}: THUNK ({depth_adjustment})\"]").unwrap();
+                    writeln!(result, "{id} -> {node}").unwrap();
+                }
                 Node::Consumed(by) => {
                     writeln!(result, "{id} [label=\"{id}: consoomed by {by}\"]").unwrap();
                 }
@@ -81,6 +88,8 @@ impl Graph {
     }
 
     fn subtree_under(&self, node: usize) -> Vec<usize> {
-        self.traverse_subtree(node).map(|(id, _)| id).collect()
+        self.traverse_subtree(node, true)
+            .map(|(id, _)| id)
+            .collect()
     }
 }
