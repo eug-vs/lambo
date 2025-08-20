@@ -80,20 +80,7 @@ impl Graph {
         }
     }
 
-    fn subtree_under(&self, id: usize) -> Vec<usize> {
-        let mut subtree = vec![id];
-        match self.graph[id] {
-            Node::Lambda { body, .. } => subtree.append(&mut self.subtree_under(body)),
-            Node::Call {
-                function,
-                parameter,
-            } => {
-                subtree.append(&mut self.subtree_under(function));
-                subtree.append(&mut self.subtree_under(parameter));
-            }
-            _ => {}
-        }
-
-        subtree
+    fn subtree_under(&self, node: usize) -> Vec<usize> {
+        self.traverse_subtree(node).map(|(id, _)| id).collect()
     }
 }

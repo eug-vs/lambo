@@ -1,3 +1,4 @@
+use std::iter::from_fn;
 use std::mem;
 
 use crate::{
@@ -25,72 +26,96 @@ impl Graph {
         self.graph.len() - 1
     }
 
+    /// WARN: since this function borrows &self, you need to collect the output first
+    /// Filtering the output before collect (rather then after) will improve performance
+    pub fn traverse_subtree(&self, root: usize) -> impl Iterator<Item = (usize, usize)> {
+        let mut stack = vec![(root, 0)];
+
+        from_fn(move || {
+            let (node, lambda_depth_to_root) = stack.pop()?;
+            match self.graph[node] {
+                Node::Lambda { body, .. } => {
+                    stack.push((body, lambda_depth_to_root + 1));
+                }
+                Node::Call {
+                    function,
+                    parameter,
+                } => {
+                    stack.push((function, lambda_depth_to_root));
+                    stack.push((parameter, lambda_depth_to_root));
+                }
+                _ => {}
+            };
+            Some((node, lambda_depth_to_root))
+        })
+    }
+
     fn adjust_depth(&mut self, expr: usize, cutoff: usize, by: isize) {
         if self.debug {
             self.debug_frames.push(self.to_dot(vec![(
                 expr,
                 format!("adjusting depth here by {by} (only if >= {cutoff})").as_str(),
             )]));
-            // TMP:
-            // fs::remove_dir_all("./debug/infinite-loop").unwrap();
-            // self.store_debug_info("./debug/infinite-loop");
         }
-        // Mutable branch
-        match &mut self.graph[expr] {
-            Node::Var {
-                kind: VariableKind::Bound { depth, .. },
-                ..
-            } if *depth >= cutoff => {
-                *depth = (*depth as isize + by) as usize;
+
+        let nodes_to_adjust = self
+            .traverse_subtree(expr)
+            .filter(|&(id, lambdas_gained_from_root)| {
+                matches!(
+                    self.graph[id],
+                    Node::Var {
+                        kind: VariableKind::Bound { depth },
+                        ..
+                    } if depth
+                        .checked_sub(lambdas_gained_from_root)
+                        .unwrap_or_default()
+                        >= cutoff
+                )
+            })
+            .map(|(id, _)| id)
+            .collect::<Vec<_>>();
+
+        for var_id in nodes_to_adjust {
+            match &mut self.graph[var_id] {
+                Node::Var {
+                    kind: VariableKind::Bound { depth },
+                    ..
+                } => *depth = (*depth as isize + by) as usize,
+                _ => unreachable!(),
             }
-            _ => {}
-        }
-        // Immutable branch - pass &mut self down to recursive call
-        match self.graph[expr] {
-            Node::Lambda { body, .. } => self.adjust_depth(body, cutoff + 1, by),
-            Node::Call {
-                function,
-                parameter,
-            } => {
-                self.adjust_depth(function, cutoff, by);
-                self.adjust_depth(parameter, cutoff, by);
-            }
-            Node::Consumed(_) => self.panic_consumed_node(expr),
-            _ => {} // Noop for vars and thunks
         }
     }
 
-    fn substitute(&mut self, expr: usize, with: usize, at_depth: usize) {
+    fn substitute(&mut self, expr: usize, with: usize) {
         if self.debug {
             self.debug_frames.push(self.to_dot(vec![
-                (expr, format!("replacing here at depth {at_depth}").as_str()),
+                (expr, format!("replacing here at depth").as_str()),
                 (with, "with this"),
             ]));
         }
-        match self.graph[expr] {
-            Node::Lambda { body, .. } => self.substitute(body, with, at_depth + 1),
-            Node::Call {
-                function,
-                parameter,
-            } => {
-                self.substitute(function, with, at_depth);
-                self.substitute(parameter, with, at_depth);
-            }
-            Node::Var {
-                kind: VariableKind::Bound { depth, .. },
-                ..
-            } if depth == at_depth => {
-                let new_id = self.clone_subtree(with);
-                self.graph[expr] = mem::replace(
-                    &mut self.graph[new_id],
-                    Node::Consumed("In substitution".to_string()),
-                );
-                let lambdas_gained = at_depth; // We rely that root call to substitute always has at_depth 1
-                if lambdas_gained > 0 {
-                    self.adjust_depth(expr, 1, lambdas_gained as isize);
-                }
-            }
-            _ => {} // Do not substitute in other vars
+
+        for (var_id, lambdas_gained_from_root) in self
+            .traverse_subtree(expr)
+            .filter(|&(id, lambdas_gained_from_root)| {
+                matches!(
+                    self.graph[id],
+                    Node::Var {
+                        kind: VariableKind::Bound { depth },
+                        ..
+                    } if depth
+                        .checked_sub(lambdas_gained_from_root)
+                        .unwrap_or_default()
+                        == 1
+                )
+            })
+            .collect::<Vec<_>>()
+        {
+            let new_id = self.clone_subtree(with);
+            self.graph[var_id] = mem::replace(
+                &mut self.graph[new_id],
+                Node::Consumed("In substitution".to_string()),
+            );
+            self.adjust_depth(var_id, 1, (lambdas_gained_from_root + 1) as isize);
         }
     }
 
@@ -132,7 +157,7 @@ impl Graph {
                             &mut self.graph[body],
                             Node::Consumed("evaluate_lambda_body".to_string()),
                         );
-                        self.substitute(expr, parameter, 1);
+                        self.substitute(expr, parameter);
                         self.adjust_depth(expr, 1, -1);
                         if self.debug {
                             self.add_debug_frame(vec![(expr, "after substitute")]);
