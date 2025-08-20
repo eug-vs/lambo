@@ -1,4 +1,4 @@
-use std::iter::from_fn;
+use std::iter::{from_fn, once};
 use std::mem;
 
 use crate::{
@@ -51,13 +51,6 @@ impl Graph {
     }
 
     fn adjust_depth(&mut self, expr: usize, cutoff: usize, by: isize) {
-        if self.debug {
-            self.debug_frames.push(self.to_dot(vec![(
-                expr,
-                format!("adjusting depth here by {by} (only if >= {cutoff})").as_str(),
-            )]));
-        }
-
         let nodes_to_adjust = self
             .traverse_subtree(expr)
             .filter(|&(id, lambdas_gained_from_root)| {
@@ -75,6 +68,18 @@ impl Graph {
             .map(|(id, _)| id)
             .collect::<Vec<_>>();
 
+        if self.debug {
+            let msg = format!("adjusting depth here by {by}");
+            self.add_debug_frame(if nodes_to_adjust.is_empty() {
+                vec![(expr, "No need to adjust depth")]
+            } else {
+                nodes_to_adjust
+                    .iter()
+                    .map(|&id| (id, msg.as_str()))
+                    .collect()
+            });
+        }
+
         for var_id in nodes_to_adjust {
             match &mut self.graph[var_id] {
                 Node::Var {
@@ -87,13 +92,6 @@ impl Graph {
     }
 
     fn substitute(&mut self, expr: usize, with: usize) {
-        if self.debug {
-            self.debug_frames.push(self.to_dot(vec![
-                (expr, format!("replacing here at depth").as_str()),
-                (with, "with this"),
-            ]));
-        }
-
         let substitution_targets = self
             .traverse_subtree(expr)
             .filter(|&(id, lambdas_gained_from_root)| {
@@ -109,6 +107,18 @@ impl Graph {
                 )
             })
             .collect::<Vec<_>>();
+
+        if self.debug {
+            self.add_debug_frame(if substitution_targets.is_empty() {
+                vec![(expr, "no substitution targets in this subtree")]
+            } else {
+                substitution_targets
+                    .iter()
+                    .map(|&(id, _)| (id, "replacing"))
+                    .chain(once((with, "with this")))
+                    .collect()
+            });
+        }
 
         for (index, &(var_id, lambdas_gained_from_root)) in substitution_targets.iter().enumerate()
         {
@@ -127,8 +137,7 @@ impl Graph {
 
     pub fn evaluate(&mut self, expr: usize, order: EvaluationOrder) {
         if self.debug {
-            self.debug_frames
-                .push(self.to_dot(vec![(expr, "evaluate")]));
+            self.add_debug_frame(vec![(expr, "evaluate")]);
         }
         match self.graph[expr] {
             Node::Var { .. } => {}
@@ -140,8 +149,7 @@ impl Graph {
                 // WARN: here we actually compute NF
                 self.evaluate(function, order);
                 if self.debug {
-                    self.debug_frames
-                        .push(self.to_dot(vec![(function, "after function resolve")]));
+                    self.add_debug_frame(vec![(function, "after function resolve")]);
                 }
                 if self.handle_builtins(expr) {
                     return;
@@ -178,8 +186,7 @@ impl Graph {
                 EvaluationOrder::Normal => {
                     self.evaluate(body, order);
                     if self.debug {
-                        self.debug_frames
-                            .push(self.to_dot(vec![(expr, "after lambda eval")]));
+                        self.add_debug_frame(vec![(expr, "after lambda eval")]);
                     }
                 }
                 _ => {}
