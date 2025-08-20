@@ -50,37 +50,39 @@ impl Graph {
         })
     }
 
-    fn adjust_depth(&mut self, expr: usize, cutoff: usize, by: isize) {
-        let nodes_to_adjust = self
-            .traverse_subtree(expr)
+    fn locally_free_variables(&self, expr: usize) -> Vec<usize> {
+        self.traverse_subtree(expr)
             .filter(|&(id, lambdas_gained_from_root)| {
                 matches!(
                     self.graph[id],
                     Node::Var {
                         kind: VariableKind::Bound { depth },
                         ..
-                    } if depth
-                        .checked_sub(lambdas_gained_from_root)
-                        .unwrap_or_default()
-                        >= cutoff
+                    } if depth > lambdas_gained_from_root
                 )
             })
             .map(|(id, _)| id)
-            .collect::<Vec<_>>();
+            .collect::<Vec<_>>()
+    }
+
+    /// Finds **locally free** variables in the subtree and
+    /// adjusts their depth by some amount, usually after losing/gaining a binder
+    fn adjust_depth(&mut self, expr: usize, by: isize) {
+        let locally_free_variables = self.locally_free_variables(expr);
 
         if self.debug {
             let msg = format!("adjusting depth here by {by}");
-            self.add_debug_frame(if nodes_to_adjust.is_empty() {
+            self.add_debug_frame(if locally_free_variables.is_empty() {
                 vec![(expr, "No need to adjust depth")]
             } else {
-                nodes_to_adjust
+                locally_free_variables
                     .iter()
                     .map(|&id| (id, msg.as_str()))
                     .collect()
             });
         }
 
-        for var_id in nodes_to_adjust {
+        for var_id in locally_free_variables {
             match &mut self.graph[var_id] {
                 Node::Var {
                     kind: VariableKind::Bound { depth },
@@ -131,7 +133,7 @@ impl Graph {
                 &mut self.graph[new_id],
                 Node::Consumed("In substitution".to_string()),
             );
-            self.adjust_depth(var_id, 1, (lambdas_gained_from_root + 1) as isize);
+            self.adjust_depth(var_id, (lambdas_gained_from_root + 1) as isize);
         }
     }
 
@@ -172,7 +174,7 @@ impl Graph {
                             Node::Consumed("evaluate_lambda_body".to_string()),
                         );
                         self.substitute(expr, parameter);
-                        self.adjust_depth(expr, 1, -1);
+                        self.adjust_depth(expr, -1);
                         if self.debug {
                             self.add_debug_frame(vec![(expr, "after substitute")]);
                         }
