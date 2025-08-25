@@ -1,4 +1,4 @@
-use std::io::{Write, stdin, stdout};
+use std::io::{stdin, stdout, Write};
 
 use crate::Expr;
 
@@ -47,7 +47,7 @@ impl IOMonad {
                     ..
                 } => match &**inner_function {
                     Expr::Var { name, .. } if name == "#io_flatmap" => {
-                        return IOMonad::from_expr(&inner_parameter).map_or(
+                        return IOMonad::from_expr(inner_parameter).map_or(
                             Some(Err(format!(
                                 "Arguments to #io_flatmap must be IO, got: {}",
                                 inner_parameter

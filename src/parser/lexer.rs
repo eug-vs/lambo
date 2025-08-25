@@ -44,10 +44,11 @@ pub fn lexer(input: &str) -> impl Iterator<Item = Token> {
                         let mut variable_name = String::new();
                         loop {
                             match chars.peek() {
-                                Some(c) => match match_single_char_token(*c) {
-                                    Some(_) => break,
-                                    None => {}
-                                },
+                                Some(c) => {
+                                    if match_single_char_token(*c).is_some() {
+                                        break;
+                                    }
+                                }
                                 None => break,
                             }
                             let ch = chars.next().unwrap(); // Consume

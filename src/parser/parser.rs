@@ -1,6 +1,6 @@
 use std::{iter::Peekable, panic};
 
-use crate::{Expr, VariableKind, parser::lexer::Token};
+use crate::{parser::lexer::Token, Expr, VariableKind};
 
 type BindingPower = usize;
 
@@ -84,7 +84,7 @@ pub fn parse_expr<I: Iterator<Item = Token>>(
             Token::Eof | Token::CloseParen | Token::In => break,
             token => token,
         };
-        let (l_bp, r_bp) = binding_power(&next_token);
+        let (l_bp, r_bp) = binding_power(next_token);
         if l_bp < min_binding_power {
             break;
         }

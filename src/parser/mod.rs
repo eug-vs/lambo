@@ -1,6 +1,6 @@
 use crate::{
-    Expr,
     parser::{lexer::lexer, parser::parse_expr},
+    Expr,
 };
 
 mod lexer;
