@@ -2,8 +2,8 @@ use std::iter::{from_fn, once};
 use std::mem;
 
 use crate::{
-    VariableKind,
     evaluator::{EvaluationOrder, Graph, Node},
+    VariableKind,
 };
 
 impl Graph {
@@ -153,9 +153,6 @@ impl Graph {
                 if self.debug {
                     self.add_debug_frame(vec![(function, "after function resolve")]);
                 }
-                if self.handle_builtins(expr) {
-                    return;
-                };
 
                 match self.graph[function] {
                     Node::Var { .. } => self.evaluate(parameter, order),

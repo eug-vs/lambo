@@ -1,8 +1,6 @@
-use std::mem;
-
 use crate::{
+    evaluator::{Graph, Node},
     Expr, VariableKind,
-    evaluator::{EvaluationOrder, Graph, Node},
 };
 
 impl Graph {
@@ -58,42 +56,5 @@ impl Graph {
             },
             Node::Consumed(_) => self.panic_consumed_node(left),
         }
-    }
-
-    pub fn handle_builtins(&mut self, id: usize) -> bool {
-        match self.graph[id] {
-            Node::Call {
-                function,
-                parameter: right,
-            } => match self.graph[function] {
-                Node::Call {
-                    function,
-                    parameter: left,
-                } => match &self.graph[function] {
-                    Node::Var {
-                        name,
-                        kind: VariableKind::Free,
-                    } if name == "#eq" => {
-                        self.evaluate(left, EvaluationOrder::Normal);
-                        self.evaluate(right, EvaluationOrder::Normal);
-                        let result = self.is_alpha_equivalent(left, right);
-                        let result_id = self.insert_boolean(result);
-                        self.graph[id] = mem::replace(
-                            &mut self.graph[result_id],
-                            Node::Consumed("By #eq".to_string()),
-                        );
-                        if self.debug {
-                            self.debug_frames
-                                .push(self.to_dot(vec![(id, "resolved #eq")]));
-                        }
-                        return true;
-                    }
-                    _ => {}
-                },
-                _ => {}
-            },
-            _ => {}
-        }
-        false
     }
 }

@@ -22,30 +22,6 @@ Many (imperative) programming languages use Strict (Applicative) evaluation orde
 
 Lambo uses Call-by-Name evaluation order. It is a variant of Normal (Non-Strict) evaluation order, where even function body is not reduced until it's called. This is also known as Lazy evaluation. In short, if the value is not directly used, it won't be evaluated. Lazy evaluation order is needed to be able to represent infinite structures and recursion, like Y combinator.
 
-## Beta-equivalence
-In Lambda calculus, most of the time you want to check "observable" equality. I.e two functions can be considered equal if they produce the same outputs on the certain range of inputs. Of course, ideally you would check it for **all** possible inputs, but that's not possible. Usually you would define separate equality checkers for each "data type", e.g `=bool`, `=num`, etc. Since we don't have types, nobody's stopping you from executing e.g `=bool 2 3`. This may lead to mistakes and makes debugging harder.
-
-A gift from above: `#eq`.
-
-`#eq` is a special function which tests *beta-equivalence* of two arguments and
-returns result in a form of Church boolean (`λx.λy.x` = `true`, `λx.λy.y` =
-`false`).
-
-This operator can not be otherwise constructed from within Lambda Calculus. It represents "intensional" equality - that two terms are really "designed" to do the same thing.
-
-```js
-#eq foo foo
-// => λx.λy.x
-#eq foo bar
-// => λx.λy.y
-
-// λa.a and λb.b is the same function - just different variable names
-#eq λa.a λb.b
-// => λx.λy.x
-```
-Of course you are not forced to use Church encoding - interpret the output
-however you want!
-
 ## Variable declaration
 This is only a syntax sugar. Lambda Calculus does not have named variables, but you can
 emulate them via argument names. Writing `let <name> <expr>` simply wraps 
@@ -56,9 +32,6 @@ Every expression below will be transformed into `(λ<variable_name>.<original>) 
 ```js
 // Identity function
 let id λx.x
-
-// Alias to built-in beta-equivalence operator #eq
-let = #eq
 ```
 
 ### Assert
@@ -66,20 +39,7 @@ Let's build our first useful function: `assert_eq`. It will take two input
 values and throw an error if they are not beta-equivalent. `#io_throw` here is a special beast that we will touch in later sections.
 
 ```js
-// FAIL, LEFT, RIGHT are just made-up names (free variables).
-// As long as they are not reduced to anything, this is very
-// useful to convey some meaning of the thrown value
-[let assert_eq
-    with assertion_pass λa.λb.PASS in
-    with assertion_fail λa.λb.#io_throw (FAIL (LEFT a) (RIGHT b)) in
-    // (#eq a b) is a Church boolean, therefore works nicely as if/then/else selector
-    λa.λb.((= a b) assertion_pass assertion_fail) a b]
-
-assert_eq (λx.x) ((λy.λz.z) y)
-// => PASS
-
-// Shorthand for assert_eq true
-let assert (assert_eq λx.λy.x)
+let assert λx.x PASS (#io_throw FAIL)
 
 assert λx.λy.x
 // => PASS
@@ -94,11 +54,12 @@ let true λx.λy.x
 let false λx.λy.y
 
 let not λbool.bool false true
-assert_eq (not false) true
+let =bool λa.λb.a b (not b)
+
+assert (=bool (not false) true)
 
 let and λp.λq.((p q) p)
-assert_eq (and true x) x
-assert_eq (and false x) false
+assert (=bool (and false UNKNOWN) false)
 ```
 
 ### Pairs
@@ -115,29 +76,36 @@ N-th Church number is a function that is essentially "Repeat N times".
 // Fun fact: this is actually equivalent to "false"
 let 0 λf.λx.x
 
+assert (not 0)
+
+let =0 \n.n (\x.false) true
+
+assert (=0 0)
+
 let succ λn.λf.λx.(f ((n f) x))
 let 1 (succ 0)
 let 2 (succ 1)
 
-assert_eq (0 f x) x
-assert_eq (1 f x) (f x)
-assert_eq (2 f x) (f (f x))
-
-assert_eq (succ (succ 0)) 2
-assert_eq (2 succ 0) 2
 
 // Shift-and-increment function: (m, n) -> (n, n + 1)
 let Φ λx.pair (pair_second x) (succ (pair_second x))
 // Easy to define predecessor function using shift-and-increment
 let pred λn.pair_first (n Φ (pair 0 0))
 
-assert_eq (pred 0) 0
-assert_eq (pred 1) 0
-assert_eq (pred 2) 1
-
 // A + B is A, with "succ" function applied B times
 let + λa.λb.((b succ) a)
 let - λa.λb.((b pred) a)
+
+let leq \a.\b.=0 (- a b)
+let =num \a.\b.(and (leq a b) (leq b a))
+
+assert (=num (succ (succ 0)) 2)
+assert (=num (2 succ 0) 2)
+
+assert (=num (pred 0) 0)
+assert (=num (pred 1) 0)
+assert (=num (pred 2) 1)
+
 
 // A * B is (+ A) function applied B times to 0
 let * λa.λb.((b (+ a)) 0)
@@ -147,7 +115,7 @@ let double (* 2)
 let ^ λa.λb.((b (* a)) 1)
 let square (^ 2)
 
-assert_eq (double 2) (square 2)
+assert (=num (double 2) (square 2))
 
 let 4 (double 2)
 let 8 (double 4)
@@ -155,8 +123,8 @@ let 16 (double 8)
 let 32 (double 16)
 let 64 (double 32)
 
-assert_eq ((+ ((+ 4) 8)) 4) 16
-assert_eq (square 4) 16
+assert (=num ((+ ((+ 4) 8)) 4) 16)
+assert (=num (square 4) 16)
 ```
 
 ## Recursion
@@ -168,12 +136,12 @@ Achieving recursion proves Turing-completeness of the language.
     (λx.f (x x))]
 
 [let fact Y λf.λn.
-    (= 0 n)
+    (=0 n)
     1
     (n | pred | f | (* n))]
 
-assert_eq (fact 4) (+ 16 8)
-assert_eq (fact (succ 4)) (64 | (+ 32) | (+ 16) | (+ 8))
+assert (=num (fact 4) (+ 16 8))
+assert (=num (fact (succ 4)) (64 | (+ 32) | (+ 16) | (+ 8)))
 ```
 
 ## Runtime
@@ -219,19 +187,16 @@ let option_or        λoption.λdefault.option some default
 let option_unwrap    λoption.option id (#io_throw EMPTY_OPTION)
 let option_unwrap_or λoption.λdefault.option id default
 
-assert_eq (option_map (some 0) succ) (some 1)
-
 // These 2 are equivalent
-assert_eq (option_unwrap (option_map (some 2) double)) 4
-assert_eq ((option_map (some 2) double) | option_unwrap) 4
+assert (=num (option_unwrap (option_map (some 2) double)) 4)
+assert (=num ((option_map (some 2) double) | option_unwrap) 4)
 
-assert_eq (option_or none (some 1)) (some 1)
-assert_eq (option_or (some 2) (some 1)) (some 2)
+assert (=num (option_unwrap (option_or none (some 1))) 1)
+assert (=num (option_unwrap (option_or (some 2) (some 1))) 2)
 
-assert_eq (option_unwrap_or none DEFAULT) DEFAULT
+assert (=num (option_unwrap_or none 2) 2)
 
-assert_eq (option_unwrap none) (#io_throw EMPTY_OPTION)
-
+// This will panic: (option_unwrap none)
 ```
 
 ## Convenience: Streams and Folds
@@ -248,8 +213,11 @@ Instead of writing `(+ (+ (+ 4 1) 2) 1)` we can be a bit more fancy: `stream_sum
 
 let stream_sum (fold_stream + 0)
 
-assert_eq (stream_sum none) 0
-assert_eq (stream_sum (some 4) (some 1) (some 2) (some 1) none)  (4 | (+ 1) | (+ 2) | (+ 1))
+assert (=num (stream_sum none) 0)
+[assert (=num
+    (stream_sum (some 4) (some 1) (some 2) (some 1) none)
+    (4 | (+ 1) | (+ 2) | (+ 1))
+)]
 //                ^ real change of behavior                       ^ syntax sugar (x | f1 | f2) = (f2 (f1 x))
 ```
 
@@ -262,16 +230,19 @@ Currently doesn't use Option to not clutter syntax too much. Ideally we would zi
 // Keeps accumulating boolean values until you give it END. Returns the number :)
 [let binary
     with pow_2 λn.(n double 1) in
-    (Y λf.λi.λacc.λbool_or_end.
-        (#eq bool_or_end END)
-        acc
-        (
+    (Y λf.λi.λacc.λoption.
+        option
+        (\bool.
             f 
             (succ i) // increment i
-            (bool_or_end (+ acc (pow_2 i)) acc) // update acc
+            (bool (+ acc (pow_2 i)) acc) // update acc
         )
+        acc
     )
     0 0]
 
-assert_eq (binary true false true true END) (1 | (+ 4) | (+ 8))
+[assert (=num
+    (binary (some true) (some false) (some true) (some true) none)
+    (1 | (+ 4) | (+ 8))
+)]
 ```
