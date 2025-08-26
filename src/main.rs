@@ -72,7 +72,7 @@ fn main() {
                     format!("./debug/{}", hash)
                 };
 
-                graph.evaluate(graph.root, 0);
+                graph.evaluate(graph.root, &mut vec![]);
                 let root = graph.unwrap_closure_chain(graph.root, vec![]);
                 graph.root = root;
                 println!(" => {}", graph);
