@@ -1,7 +1,7 @@
 use std::{collections::HashSet, fs};
 
 use crate::{
-    evaluator::{Node, VariableKind},
+    evaluator::{DebugConfig, Node, VariableKind},
     Graph,
 };
 
@@ -66,20 +66,47 @@ impl Graph {
         result
     }
 
+    pub fn is_debug_enabled(&self) -> bool {
+        matches!(self.debug_config, DebugConfig::Enabled { .. })
+    }
+
     pub fn add_debug_frame(&mut self, labels: Vec<(usize, &str)>) {
-        if self.debug {
+        if let DebugConfig::Enabled {
+            auto_dump_every, ..
+        } = self.debug_config
+        {
             let dot = self.to_dot(labels);
             self.debug_frames.push(dot);
+
+            if self.debug_frames.len() > self.debug_last_dump_at + auto_dump_every {
+                self.dump_debug_frames();
+                self.debug_last_dump_at = self.debug_frames.len();
+            }
         }
     }
 
-    pub fn dump_debug_frames(&self, dir: &str) {
-        if self.debug {
-            println!("[DBG] Storing debug info into {dir}");
-            fs::remove_dir(dir).unwrap_or_default();
-            fs::create_dir(dir).unwrap_or_default();
-            for (id, frame) in self.debug_frames.iter().enumerate() {
-                let dot_filename = format!("{dir}/{:03}.dot", id);
+    pub fn enable_debug(&mut self, config: DebugConfig) {
+        match &config {
+            DebugConfig::Enabled { dump_path, .. } => {
+                self.debug_config = config.clone();
+                fs::remove_dir(dump_path).unwrap_or_default();
+                fs::create_dir(dump_path).unwrap_or_default();
+            }
+            _ => unimplemented!(),
+        }
+    }
+
+    pub fn dump_debug_frames(&self) {
+        if let DebugConfig::Enabled { dump_path, .. } = &self.debug_config {
+            println!("[DBG] Storing debug info into {dump_path}");
+
+            for (id, frame) in self
+                .debug_frames
+                .iter()
+                .enumerate()
+                .skip(self.debug_last_dump_at)
+            {
+                let dot_filename = format!("{dump_path}/{:04}.dot", id);
                 std::fs::write(dot_filename, frame).unwrap();
             }
         }

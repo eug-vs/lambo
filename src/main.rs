@@ -3,7 +3,7 @@ use std::{
     hash::{DefaultHasher, Hash, Hasher},
 };
 
-use crate::evaluator::Graph;
+use crate::evaluator::{DebugConfig, Graph};
 mod evaluator;
 mod parser;
 
@@ -64,20 +64,24 @@ fn main() {
                 println!("$   {}", input);
                 let mut graph =
                     Graph::from_str(format!("{} {}", context.join(" "), input).as_str());
-                // graph.debug = true;
-                let debug_path = {
+
+                let dump_path = {
                     let mut hasher = DefaultHasher::new();
                     graph.fmt_de_brujin(graph.root).hash(&mut hasher);
                     let hash = hasher.finish();
                     format!("./debug/{}", hash)
                 };
+                graph.enable_debug(DebugConfig::Enabled {
+                    dump_path,
+                    auto_dump_every: 100,
+                });
 
                 graph.evaluate(graph.root, &mut vec![]);
                 let root = graph.unwrap_closure_chain(graph.root, vec![]);
                 graph.root = root;
                 println!(" => {}", graph);
 
-                graph.dump_debug_frames(&debug_path);
+                graph.dump_debug_frames();
             }
         }
     }

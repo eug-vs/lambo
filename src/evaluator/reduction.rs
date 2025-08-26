@@ -4,11 +4,6 @@ use std::mem;
 
 use crate::evaluator::{Graph, Node, VariableKind};
 
-pub enum StepResult {
-    Answer,
-    Needed(usize, usize),
-}
-
 impl Graph {
     pub fn clone_subtree(&mut self, id: usize) -> usize {
         let mut node = self.graph[id].clone();
@@ -69,7 +64,7 @@ impl Graph {
             },
             _ => return,
         };
-        if self.debug {
+        if self.is_debug_enabled() {
             self.add_debug_frame(vec![
                 (expr, "performing lift"),
                 (inner_call, "inner call"),
@@ -97,7 +92,7 @@ impl Graph {
 
         mem::swap(&mut buffer, &mut self.graph[inner_call]);
         mem::swap(&mut buffer, &mut self.graph[outer_call]);
-        if self.debug {
+        if self.is_debug_enabled() {
             self.add_debug_frame(vec![(expr, "after lift")]);
         }
     }
@@ -119,7 +114,7 @@ impl Graph {
             },
             _ => return,
         };
-        if self.debug {
+        if self.is_debug_enabled() {
             self.add_debug_frame(vec![
                 (expr, "performing assoc"),
                 (inner_call, "inner call"),
@@ -144,26 +139,13 @@ impl Graph {
 
         mem::swap(&mut buffer, &mut self.graph[inner_call]);
         mem::swap(&mut buffer, &mut self.graph[outer_call]);
-        if self.debug {
+        if self.is_debug_enabled() {
             self.add_debug_frame(vec![(expr, "after assoc")]);
         }
     }
 
     fn is_value(&self, expr: usize) -> bool {
         matches!(self.graph[expr], Node::Lambda { .. }) || (self.is_structure(expr))
-    }
-
-    fn is_answer(&self, expr: usize) -> bool {
-        self.is_value(expr)
-            || match self.graph[expr] {
-                Node::Call { function, .. } => match &self.graph[function] {
-                    Node::Lambda { body, .. } => {
-                        return self.is_answer(*body);
-                    }
-                    _ => false,
-                },
-                _ => false,
-            }
     }
 
     /// Structure is a sequence of applications with a frozen var in its head.
@@ -207,10 +189,12 @@ impl Graph {
         }
     }
 
-    /// Step is considered applying one of the axioms (deref, assoc, lift) on the current expr
+    /// Evaluates given expression to an ANSWER
     pub fn evaluate(&mut self, expr: usize, levels: &mut Vec<usize>) {
         let level = levels.len();
-        self.add_debug_frame(vec![(expr, "evaluate")]);
+        if self.is_debug_enabled() {
+            self.add_debug_frame(vec![(expr, "evaluate")]);
+        }
 
         if let Node::Var {
             kind: VariableKind::Bound { depth },
@@ -219,7 +203,9 @@ impl Graph {
         {
             let mut rest = levels.split_off(levels.len() - depth);
             let parameter = *rest.first().unwrap();
-            self.add_debug_frame(vec![(expr, "deref!"), (parameter, "with this")]);
+            if self.is_debug_enabled() {
+                self.add_debug_frame(vec![(expr, "deref!"), (parameter, "with this")]);
+            }
             self.evaluate(parameter, levels);
             debug_assert!(levels.len() == level, "Levels should have been cleaned up!");
             levels.append(&mut rest);
@@ -243,13 +229,12 @@ impl Graph {
                     levels.push(parameter);
                     self.evaluate(body, levels);
                     levels.truncate(level);
-                    return;
                 }
             } else {
                 self.lift(expr);
                 self.adjust_depth(parameter, 1); // Lift will add 1 binder
                 levels.truncate(level);
-                return self.evaluate(expr, levels);
+                self.evaluate(expr, levels)
             }
         }
     }

@@ -15,6 +15,15 @@ pub enum VariableKind {
 }
 
 #[derive(Debug, Clone)]
+pub enum DebugConfig {
+    Enabled {
+        dump_path: String,
+        auto_dump_every: usize,
+    },
+    Disabled,
+}
+
+#[derive(Debug, Clone)]
 pub enum Node {
     Var { name: String, kind: VariableKind },
     Lambda { argument: String, body: usize },
@@ -26,8 +35,9 @@ pub enum Node {
 pub struct Graph {
     graph: SmallVec<[Node; 1024]>,
     pub root: usize,
-    pub debug: bool,
+    debug_config: DebugConfig,
     debug_frames: SmallVec<[String; 1024]>,
+    debug_last_dump_at: usize,
 }
 
 impl Graph {
@@ -35,8 +45,9 @@ impl Graph {
         Graph {
             graph: SmallVec::new(),
             root: 0,
-            debug: false,
+            debug_config: DebugConfig::Disabled,
             debug_frames: SmallVec::new(),
+            debug_last_dump_at: 0,
         }
     }
 
@@ -46,7 +57,7 @@ impl Graph {
     }
 
     fn panic_consumed_node(&self, id: usize) -> ! {
-        self.dump_debug_frames("./error");
+        self.dump_debug_frames();
         panic!("Tried to access a dead node: {id}");
     }
 
