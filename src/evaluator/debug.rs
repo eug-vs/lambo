@@ -1,6 +1,6 @@
 use std::{collections::HashSet, fs};
 
-use crate::{Graph, VariableKind, evaluator::Node};
+use crate::{evaluator::Node, Graph, VariableKind};
 
 impl Graph {
     /// Convert current Graph state into String in DOT format.
@@ -64,8 +64,10 @@ impl Graph {
     }
 
     pub fn add_debug_frame(&mut self, labels: Vec<(usize, &str)>) {
-        let dot = self.to_dot(labels);
-        self.debug_frames.push(dot);
+        if self.debug {
+            let dot = self.to_dot(labels);
+            self.debug_frames.push(dot);
+        }
     }
 
     pub fn dump_debug_frames(&self, dir: &str) {

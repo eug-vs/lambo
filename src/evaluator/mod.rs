@@ -4,7 +4,6 @@ use smallvec::SmallVec;
 
 use crate::{Expr, VariableKind};
 
-mod builtins;
 mod debug;
 mod reduction;
 
@@ -22,14 +21,6 @@ pub struct Graph {
     pub root: usize,
     debug: bool,
     debug_frames: SmallVec<[String; 1024]>,
-}
-
-/// Determines when to descend under lambdas (strict vs lazy).
-#[derive(Debug, Clone, Copy)]
-pub enum EvaluationOrder {
-    Normal,
-    /// Aka CallByName
-    Lazy,
 }
 
 impl Graph {

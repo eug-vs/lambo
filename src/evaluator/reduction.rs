@@ -1,13 +1,14 @@
-use std::iter::{from_fn, once};
+use std::collections::HashSet;
+use std::iter::from_fn;
 use std::mem;
 
 use crate::{
-    evaluator::{EvaluationOrder, Graph, Node},
+    evaluator::{Graph, Node},
     VariableKind,
 };
 
 impl Graph {
-    fn clone_subtree(&mut self, id: usize) -> usize {
+    pub fn clone_subtree(&mut self, id: usize) -> usize {
         let mut node = self.graph[id].clone();
         match &mut node {
             Node::Var { .. } => {}
@@ -50,8 +51,176 @@ impl Graph {
         })
     }
 
-    fn locally_free_variables(&self, expr: usize) -> Vec<usize> {
-        self.traverse_subtree(expr)
+    pub fn lift(&mut self, expr: usize) {
+        let (outer_call, inner_call, lambda) = match self.graph[expr] {
+            Node::Call {
+                function: inner_call,
+                ..
+            } => match self.graph[inner_call] {
+                Node::Call {
+                    function: lambda, ..
+                } => match self.graph[lambda] {
+                    Node::Lambda { .. } => (expr, inner_call, lambda),
+                    _ => return,
+                },
+                _ => return,
+            },
+            _ => return,
+        };
+        if self.debug {
+            self.add_debug_frame(vec![
+                (expr, "performing lift"),
+                (inner_call, "inner call"),
+                (lambda, "lambda"),
+            ]);
+        }
+
+        let mut buffer = mem::replace(
+            &mut self.graph[outer_call],
+            Node::Consumed("Lift".to_string()),
+        );
+
+        match &mut buffer {
+            Node::Call { function, .. } => match &mut self.graph[lambda] {
+                Node::Lambda { body, .. } => {
+                    mem::swap(function, body);
+                }
+                _ => {
+                    dbg!(&self.graph[lambda]);
+                    unreachable!();
+                }
+            },
+            _ => unreachable!(),
+        }
+
+        mem::swap(&mut buffer, &mut self.graph[inner_call]);
+        mem::swap(&mut buffer, &mut self.graph[outer_call]);
+        if self.debug {
+            self.add_debug_frame(vec![(expr, "after lift")]);
+        }
+    }
+    pub fn assoc(&mut self, expr: usize) {
+        let (outer_call, inner_call, lambda) = match self.graph[expr] {
+            Node::Call {
+                parameter: inner_call,
+                ..
+            } => match self.graph[inner_call] {
+                Node::Call {
+                    function: lambda, ..
+                } => match self.graph[lambda] {
+                    Node::Lambda { .. } => (expr, inner_call, lambda),
+
+                    _ => return,
+                },
+
+                _ => return,
+            },
+            _ => return,
+        };
+        if self.debug {
+            self.add_debug_frame(vec![
+                (expr, "performing assoc"),
+                (inner_call, "inner call"),
+                (lambda, "lambda"),
+            ]);
+        }
+
+        let mut buffer = mem::replace(
+            &mut self.graph[outer_call],
+            Node::Consumed("Lift".to_string()),
+        );
+
+        match &mut buffer {
+            Node::Call { parameter, .. } => match &mut self.graph[lambda] {
+                Node::Lambda { body, .. } => {
+                    mem::swap(parameter, body);
+                }
+                _ => unreachable!(),
+            },
+            _ => unreachable!(),
+        }
+
+        mem::swap(&mut buffer, &mut self.graph[inner_call]);
+        mem::swap(&mut buffer, &mut self.graph[outer_call]);
+        if self.debug {
+            self.add_debug_frame(vec![(expr, "after assoc")]);
+        }
+    }
+
+    fn is_value(&self, expr: usize) -> bool {
+        matches!(self.graph[expr], Node::Lambda { .. }) || (self.is_structure(expr))
+    }
+
+    fn is_answer(&self, expr: usize) -> bool {
+        self.is_value(expr)
+            || match self.graph[expr] {
+                Node::Call { function, .. } => match &self.graph[function] {
+                    Node::Lambda { body, .. } => {
+                        return self.is_answer(*body);
+                    }
+                    _ => false,
+                },
+                _ => false,
+            }
+    }
+
+    /// Structure is a sequence of applications with a frozen var in its head.
+    /// WARN: This implementation allows non-value parameters in the structure
+    fn is_structure(&self, expr: usize) -> bool {
+        match self.graph[expr] {
+            Node::Call { function, .. } => self.is_structure(function),
+            Node::Var {
+                kind: VariableKind::Free,
+                ..
+            } => true,
+            _ => false,
+        }
+    }
+
+    fn is_bound_variable(&self, lambda_body: usize, var: usize) -> Option<usize> {
+        let (_, lambda_depth_to_root) = self
+            .traverse_subtree(lambda_body)
+            .find(|&(id, _)| id == var)
+            .unwrap();
+
+        match self.graph[var] {
+            Node::Var {
+                kind: VariableKind::Bound { depth },
+                ..
+            } if depth == lambda_depth_to_root + 1 => Some(depth),
+            _ => None,
+        }
+    }
+
+    /// Implements evaluation context definition.
+    /// Returns an ID of the "hole" in context E,
+    /// a.k.a the term currently "blocking" evaluation of a term
+    fn get_needed_id(&mut self, expr: usize) -> usize {
+        match self.graph[expr] {
+            Node::Call {
+                function,
+                parameter,
+            } => match self.graph[function] {
+                Node::Lambda { body, .. } => {
+                    let body_redex = self.get_needed_id(body);
+
+                    if self.is_bound_variable(body, body_redex).is_some() {
+                        self.get_needed_id(parameter)
+                    } else {
+                        body_redex
+                    }
+                }
+                _ => self.get_needed_id(function),
+            },
+            _ => expr,
+        }
+    }
+
+    /// Finds **locally free** variables in the subtree and
+    /// adjusts their depth by some amount, usually after losing/gaining a binder
+    fn adjust_depth(&mut self, expr: usize, by: usize) {
+        let locally_free_variables = self
+            .traverse_subtree(expr)
             .filter(|&(id, lambdas_gained_from_root)| {
                 matches!(
                     self.graph[id],
@@ -62,135 +231,101 @@ impl Graph {
                 )
             })
             .map(|(id, _)| id)
-            .collect::<Vec<_>>()
-    }
-
-    /// Finds **locally free** variables in the subtree and
-    /// adjusts their depth by some amount, usually after losing/gaining a binder
-    fn adjust_depth(&mut self, expr: usize, by: isize) {
-        let locally_free_variables = self.locally_free_variables(expr);
-
-        if self.debug {
-            let msg = format!("adjusting depth here by {by}");
-            self.add_debug_frame(if locally_free_variables.is_empty() {
-                vec![(expr, "No need to adjust depth")]
-            } else {
-                locally_free_variables
-                    .iter()
-                    .map(|&id| (id, msg.as_str()))
-                    .collect()
-            });
-        }
+            .collect::<HashSet<_>>();
 
         for var_id in locally_free_variables {
             match &mut self.graph[var_id] {
                 Node::Var {
                     kind: VariableKind::Bound { depth },
                     ..
-                } => *depth = (*depth as isize + by) as usize,
+                } => *depth += by,
                 _ => unreachable!(),
             }
         }
     }
 
-    fn substitute(&mut self, expr: usize, with: usize) {
-        let substitution_targets = self
-            .traverse_subtree(expr)
-            .filter(|&(id, lambdas_gained_from_root)| {
-                matches!(
-                    self.graph[id],
-                    Node::Var {
-                        kind: VariableKind::Bound { depth },
-                        ..
-                    } if depth
-                        .checked_sub(lambdas_gained_from_root)
-                        .unwrap_or_default()
-                        == 1
-                )
-            })
-            .collect::<Vec<_>>();
+    /// Step is considered applying one of the axioms (deref, assoc, lift) on the current expr
+    fn evaluation_step(&mut self, expr: usize) {
+        self.add_debug_frame(vec![(expr, format!("evaluation step {expr}").as_str())]);
 
-        if self.debug {
-            self.add_debug_frame(if substitution_targets.is_empty() {
-                vec![(expr, "no substitution targets in this subtree")]
-            } else {
-                substitution_targets
-                    .iter()
-                    .map(|&(id, _)| (id, "replacing"))
-                    .chain(once((with, "with this")))
-                    .collect()
-            });
+        if self.is_answer(expr) {
+            self.add_debug_frame(vec![(expr, "already an answer")]);
+            return;
         }
 
-        for (index, &(var_id, lambdas_gained_from_root)) in substitution_targets.iter().enumerate()
+        if let Node::Call {
+            function,
+            parameter,
+        } = self.graph[expr]
         {
-            let new_id = if index < substitution_targets.len() - 1 {
-                self.clone_subtree(with)
+            // All axioms demand an answer on function position
+            while !self.is_answer(function) {
+                return self.evaluation_step(function);
+            }
+
+            if self.is_value(function) {
+                if let Node::Lambda { body, .. } = self.graph[function] {
+                    let body_redex = self.get_needed_id(body);
+                    self.add_debug_frame(vec![(body_redex, "redex"), (body, "in this body")]);
+
+                    if let Some(depth) = self.is_bound_variable(body, body_redex) {
+                        // Both deref and assoc demand answer on argument position
+                        while !self.is_answer(parameter) {
+                            return self.evaluation_step(parameter);
+                        }
+
+                        if self.is_value(parameter) {
+                            let cloned_id = self.clone_subtree(parameter);
+                            self.adjust_depth(cloned_id, depth);
+                            self.graph.swap(body_redex, cloned_id);
+
+                            self.add_debug_frame(vec![
+                                (expr, "deref!"),
+                                (body_redex, "substituted here"),
+                                (parameter, "from this"),
+                            ]);
+                        } else {
+                            self.add_debug_frame(vec![(expr, "assoc!")]);
+                            self.adjust_depth(function, 1); // Assoc will add 1 binder
+                            self.assoc(expr);
+                        }
+                    } else {
+                        self.add_debug_frame(vec![
+                            (
+                                expr,
+                                "Closure but not an answer. Can't apply axioms at this node",
+                            ),
+                            (body, "Advance evaluation into the body"),
+                        ]);
+                        self.evaluation_step(body)
+                    }
+                }
             } else {
-                with // No need to clone the last target
-            };
-            self.graph[var_id] = mem::replace(
-                &mut self.graph[new_id],
-                Node::Consumed("In substitution".to_string()),
-            );
-            self.adjust_depth(var_id, (lambdas_gained_from_root + 1) as isize);
+                self.add_debug_frame(vec![(expr, "function is answer but not value: lift!")]);
+                self.lift(expr);
+                self.adjust_depth(parameter, 1); // Lift will add 1 binder
+            }
         }
     }
 
-    pub fn evaluate(&mut self, expr: usize, order: EvaluationOrder) {
-        if self.debug {
-            self.add_debug_frame(vec![(expr, "evaluate")]);
+    pub fn evaluate(&mut self, expr: usize) {
+        while !self.is_answer(expr) {
+            self.evaluation_step(expr);
         }
-        match self.graph[expr] {
-            Node::Var { .. } => {}
-            Node::Call {
-                function,
-                parameter,
-            } => {
-                // Convert functon to WNHF first
-                // WARN: here we actually compute NF
-                self.evaluate(function, order);
-                if self.debug {
-                    self.add_debug_frame(vec![(function, "after function resolve")]);
-                }
+    }
 
-                match self.graph[function] {
-                    Node::Var { .. } => self.evaluate(parameter, order),
-                    Node::Call { .. } => {} // Call already in WHNF, not much to do
-                    Node::Lambda { body, .. } => {
-                        if self.debug {
-                            self.add_debug_frame(vec![
-                                (expr, "resolving this call"),
-                                (function, "this defines variable"),
-                                (parameter, "moving this"),
-                                (body, "into this subtree"),
-                            ]);
-                        }
-                        self.graph[expr] = mem::replace(
-                            &mut self.graph[body],
-                            Node::Consumed("evaluate_lambda_body".to_string()),
-                        );
-                        self.substitute(expr, parameter);
-                        self.adjust_depth(expr, -1);
-                        if self.debug {
-                            self.add_debug_frame(vec![(expr, "after substitute")]);
-                        }
-
-                        self.evaluate(expr, order);
-                    }
-                    Node::Consumed(_) => self.panic_consumed_node(function),
-                }
+    pub fn unwrap_closure_chain(&mut self, expr: usize, mut context: Vec<usize>) -> usize {
+        if let Node::Call {
+            function,
+            parameter,
+        } = self.graph[expr]
+        {
+            if let Node::Lambda { body, .. } = &self.graph[function] {
+                context.push(parameter);
+                return self.unwrap_closure_chain(*body, context);
             }
-            Node::Lambda { body, .. } => match order {
-                EvaluationOrder::Normal => {
-                    self.evaluate(body, order);
-                    if self.debug {
-                        self.add_debug_frame(vec![(expr, "after lambda eval")]);
-                    }
-                }
-                _ => {}
-            },
-            Node::Consumed(_) => self.panic_consumed_node(expr),
-        }
+        };
+
+        expr
     }
 }

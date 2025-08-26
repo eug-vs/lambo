@@ -5,10 +5,7 @@ use std::{
     mem,
 };
 
-use crate::{
-    evaluator::{EvaluationOrder, Graph},
-    runtime::IOMonad,
-};
+use crate::{evaluator::Graph, runtime::IOMonad};
 mod evaluator;
 mod parser;
 mod runtime;
@@ -78,7 +75,7 @@ impl Expr {
                 name,
                 kind: VariableKind::Free,
                 ..
-            } => format!("{}", name),
+            } => name.to_string(),
             Expr::Var {
                 kind: VariableKind::Bound { depth, .. },
                 ..
@@ -94,17 +91,6 @@ impl Expr {
                 parameter.fmt_de_brujin()
             ),
         }
-    }
-}
-
-impl Expr {
-    #[allow(non_snake_case)]
-    fn TRUE() -> Expr {
-        Expr::from_str("λx.λy.x")
-    }
-    #[allow(non_snake_case)]
-    fn FALSE() -> Expr {
-        Expr::from_str("λx.λy.y")
     }
 }
 
@@ -139,10 +125,11 @@ impl Expr {
             },
         );
         let mut graph = Graph::from_expr(expr, false);
-        graph.evaluate(graph.root, EvaluationOrder::Lazy);
-        graph.dump_debug_frames(&debug_path);
+        graph.evaluate(graph.root);
+        let root = graph.unwrap_closure_chain(graph.root, vec![]);
 
-        *self = graph.to_expr(graph.root);
+        graph.dump_debug_frames(&debug_path);
+        *self = graph.to_expr(root);
     }
 
     fn scoped(&self, context: &Vec<(String, Expr)>) -> Expr {
@@ -205,7 +192,7 @@ fn main() {
     let mut lines = extracted
         .iter()
         .map(|line| line.split("//").next().unwrap_or(""))
-        .filter(|line| line.trim().len() > 0);
+        .filter(|line| !line.trim().is_empty());
 
     loop {
         let input = match lines.next() {
@@ -213,7 +200,7 @@ fn main() {
                 // Handle multiline statements with [ ]
                 if line.contains("[") {
                     let mut joined = line.to_string().replace("[", "");
-                    while let Some(l) = lines.next() {
+                    for l in lines.by_ref() {
                         joined = joined + "\n" + &l.replace("]", "");
                         if l.contains("]") {
                             break;
