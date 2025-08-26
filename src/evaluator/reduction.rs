@@ -4,6 +4,11 @@ use std::mem;
 
 use crate::evaluator::{Graph, Node, VariableKind};
 
+pub enum StepResult {
+    Answer,
+    Needed(usize, usize),
+}
+
 impl Graph {
     pub fn clone_subtree(&mut self, id: usize) -> usize {
         let mut node = self.graph[id].clone();
@@ -174,45 +179,6 @@ impl Graph {
         }
     }
 
-    fn is_bound_variable(&self, lambda_body: usize, var: usize) -> Option<usize> {
-        let (_, lambda_depth_to_root) = self
-            .traverse_subtree(lambda_body)
-            .find(|&(id, _)| id == var)
-            .unwrap();
-
-        match self.graph[var] {
-            Node::Var {
-                kind: VariableKind::Bound { depth },
-                ..
-            } if depth == lambda_depth_to_root + 1 => Some(depth),
-            _ => None,
-        }
-    }
-
-    /// Implements evaluation context definition.
-    /// Returns an ID of the "hole" in context E,
-    /// a.k.a the term currently "blocking" evaluation of a term
-    fn get_needed_id(&mut self, expr: usize) -> usize {
-        match self.graph[expr] {
-            Node::Call {
-                function,
-                parameter,
-            } => match self.graph[function] {
-                Node::Lambda { body, .. } => {
-                    let body_redex = self.get_needed_id(body);
-
-                    if self.is_bound_variable(body, body_redex).is_some() {
-                        self.get_needed_id(parameter)
-                    } else {
-                        body_redex
-                    }
-                }
-                _ => self.get_needed_id(function),
-            },
-            _ => expr,
-        }
-    }
-
     /// Finds **locally free** variables in the subtree and
     /// adjusts their depth by some amount, usually after losing/gaining a binder
     fn adjust_depth(&mut self, expr: usize, by: usize) {
@@ -242,73 +208,95 @@ impl Graph {
     }
 
     /// Step is considered applying one of the axioms (deref, assoc, lift) on the current expr
-    fn evaluation_step(&mut self, expr: usize) {
-        self.add_debug_frame(vec![(expr, format!("evaluation step {expr}").as_str())]);
+    pub fn evaluate(&mut self, expr: usize, level: usize) -> StepResult {
+        self.add_debug_frame(vec![(expr, "evaluate")]);
+        let mut loops = 0;
 
-        if self.is_answer(expr) {
-            self.add_debug_frame(vec![(expr, "already an answer")]);
-            return;
-        }
-
-        if let Node::Call {
-            function,
-            parameter,
-        } = self.graph[expr]
+        if let Node::Var {
+            kind: VariableKind::Bound { depth },
+            ..
+        } = &self.graph[expr]
         {
-            // All axioms demand an answer on function position
-            while !self.is_answer(function) {
-                return self.evaluation_step(function);
-            }
-
-            if self.is_value(function) {
-                if let Node::Lambda { body, .. } = self.graph[function] {
-                    let body_redex = self.get_needed_id(body);
-                    self.add_debug_frame(vec![(body_redex, "redex"), (body, "in this body")]);
-
-                    if let Some(depth) = self.is_bound_variable(body, body_redex) {
-                        // Both deref and assoc demand answer on argument position
-                        while !self.is_answer(parameter) {
-                            return self.evaluation_step(parameter);
-                        }
-
-                        if self.is_value(parameter) {
-                            let cloned_id = self.clone_subtree(parameter);
-                            self.adjust_depth(cloned_id, depth);
-                            self.graph.swap(body_redex, cloned_id);
-
-                            self.add_debug_frame(vec![
-                                (expr, "deref!"),
-                                (body_redex, "substituted here"),
-                                (parameter, "from this"),
-                            ]);
-                        } else {
-                            self.add_debug_frame(vec![(expr, "assoc!")]);
-                            self.adjust_depth(function, 1); // Assoc will add 1 binder
-                            self.assoc(expr);
-                        }
-                    } else {
-                        self.add_debug_frame(vec![
-                            (
-                                expr,
-                                "Closure but not an answer. Can't apply axioms at this node",
-                            ),
-                            (body, "Advance evaluation into the body"),
-                        ]);
-                        self.evaluation_step(body)
-                    }
-                }
-            } else {
-                self.add_debug_frame(vec![(expr, "function is answer but not value: lift!")]);
-                self.lift(expr);
-                self.adjust_depth(parameter, 1); // Lift will add 1 binder
-            }
+            return StepResult::Needed(expr, level - depth);
         }
-    }
 
-    pub fn evaluate(&mut self, expr: usize) {
         while !self.is_answer(expr) {
-            self.evaluation_step(expr);
+            loops += 1;
+            if loops > 100 {
+                self.panic_consumed_node(expr);
+            }
+            self.add_debug_frame(vec![(expr, "not an answer, looping")]);
+            if let Node::Call {
+                function,
+                parameter,
+            } = self.graph[expr]
+            {
+                if let StepResult::Needed(needed_id, needed_level) = self.evaluate(function, level)
+                {
+                    if needed_level < level {
+                        return StepResult::Needed(needed_id, needed_level);
+                    }
+                };
+
+                if self.is_value(function) {
+                    if let Node::Lambda { body, .. } = self.graph[function] {
+                        match self.evaluate(body, level + 1) {
+                            StepResult::Needed(needed_id, needed_level) => {
+                                self.add_debug_frame(vec![
+                                    (needed_id, "needed variable"),
+                                    (body, "in this body"),
+                                ]);
+                                if needed_level < level {
+                                    return StepResult::Needed(needed_id, needed_level);
+                                }
+                                if needed_level > level {
+                                    unreachable!();
+                                }
+                                // Function body has a hole in it!
+                                // Preparing deref or assoc, both need answer on parameter position
+                                if let StepResult::Needed(needed_id, needed_level) =
+                                    self.evaluate(parameter, level)
+                                {
+                                    return StepResult::Needed(needed_id, needed_level);
+                                };
+                                // Parameter is an answer at this point!
+                                if self.is_value(parameter) {
+                                    let cloned_id = self.clone_subtree(parameter);
+                                    let depth_adjustment = match self.graph[needed_id] {
+                                        Node::Var {
+                                            kind: VariableKind::Bound { depth },
+                                            ..
+                                        } => depth,
+                                        _ => unreachable!(),
+                                    };
+                                    self.adjust_depth(cloned_id, depth_adjustment);
+                                    self.graph.swap(needed_id, cloned_id);
+
+                                    self.add_debug_frame(vec![
+                                        (expr, "deref!"),
+                                        (needed_id, "substituted here"),
+                                        (parameter, "from this"),
+                                    ]);
+                                } else {
+                                    self.add_debug_frame(vec![(expr, "assoc!")]);
+                                    self.adjust_depth(function, 1); // Assoc will add 1 binder
+                                    self.assoc(expr);
+                                }
+                            }
+                            StepResult::Answer => {
+                                // Nothing to substitute!?
+                                return StepResult::Answer;
+                            }
+                        };
+                    }
+                } else {
+                    self.add_debug_frame(vec![(expr, "function is answer but not value: lift!")]);
+                    self.lift(expr);
+                    self.adjust_depth(parameter, 1); // Lift will add 1 binder
+                }
+            }
         }
+        StepResult::Answer
     }
 
     pub fn unwrap_closure_chain(&mut self, expr: usize, mut context: Vec<usize>) -> usize {

@@ -26,7 +26,7 @@ pub enum Node {
 pub struct Graph {
     graph: SmallVec<[Node; 1024]>,
     pub root: usize,
-    debug: bool,
+    pub debug: bool,
     debug_frames: SmallVec<[String; 1024]>,
 }
 

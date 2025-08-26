@@ -64,6 +64,7 @@ fn main() {
                 println!("$   {}", input);
                 let mut graph =
                     Graph::from_str(format!("{} {}", context.join(" "), input).as_str());
+                // graph.debug = true;
                 let debug_path = {
                     let mut hasher = DefaultHasher::new();
                     graph.fmt_de_brujin(graph.root).hash(&mut hasher);
@@ -71,7 +72,7 @@ fn main() {
                     format!("./debug/{}", hash)
                 };
 
-                graph.evaluate(graph.root);
+                graph.evaluate(graph.root, 0);
                 let root = graph.unwrap_closure_chain(graph.root, vec![]);
                 graph.root = root;
                 println!(" => {}", graph);
