@@ -42,14 +42,9 @@ pub fn lexer(input: &str) -> impl Iterator<Item = Token> {
                     // No reserved token, it means we are parsing variable name
                     None => {
                         let mut variable_name = String::new();
-                        loop {
-                            match chars.peek() {
-                                Some(c) => {
-                                    if match_single_char_token(*c).is_some() {
-                                        break;
-                                    }
-                                }
-                                None => break,
+                        while let Some(c) = chars.peek() {
+                            if match_single_char_token(*c).is_some() {
+                                break;
                             }
                             let ch = chars.next().unwrap(); // Consume
                             variable_name.push(ch);

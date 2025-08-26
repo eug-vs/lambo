@@ -1,6 +1,9 @@
 use std::{collections::HashSet, fs};
 
-use crate::{evaluator::Node, Graph, VariableKind};
+use crate::{
+    evaluator::{Node, VariableKind},
+    Graph,
+};
 
 impl Graph {
     /// Convert current Graph state into String in DOT format.

@@ -2,10 +2,7 @@ use std::collections::HashSet;
 use std::iter::from_fn;
 use std::mem;
 
-use crate::{
-    evaluator::{Graph, Node},
-    VariableKind,
-};
+use crate::evaluator::{Graph, Node, VariableKind};
 
 impl Graph {
     pub fn clone_subtree(&mut self, id: usize) -> usize {
