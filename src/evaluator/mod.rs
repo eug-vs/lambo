@@ -117,6 +117,10 @@ impl Graph {
             Node::Consumed(_) => self.panic_consumed_node(expr),
         }
     }
+
+    pub fn size(&self) -> usize {
+        self.graph.len()
+    }
 }
 
 impl Display for Graph {

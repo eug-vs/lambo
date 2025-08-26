@@ -80,6 +80,7 @@ fn main() {
                 let root = graph.unwrap_closure_chain(graph.root, vec![]);
                 graph.root = root;
                 println!(" => {}", graph);
+                println!("||  {} nodes", graph.size());
 
                 graph.dump_debug_frames();
             }
