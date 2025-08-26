@@ -1,4 +1,4 @@
-use std::{collections::HashSet, fs};
+use std::{collections::HashSet, fs, iter::once};
 
 use crate::{
     evaluator::{DebugConfig, Node, VariableKind},
@@ -14,13 +14,25 @@ impl Graph {
         use std::fmt::Write;
 
         let mut result = String::from("digraph EXPR {\n");
-        writeln!(result, "ROOT -> {}", self.root).unwrap();
+        let root_label = (self.root, "ROOT");
 
-        let mut subtree = self.subtree_under(self.root);
-        for (label_id, (node_id, name)) in labels.iter().enumerate() {
+        let mut subtree = HashSet::new();
+        for (label_id, (node_id, name)) in once(&root_label).chain(labels.iter()).enumerate() {
             writeln!(result, "LABEL{label_id} [label=\"{name}\", color=\"red\"]",).unwrap();
             writeln!(result, "LABEL{label_id} -> {}", node_id).unwrap();
-            subtree.append(&mut self.subtree_under(*node_id));
+
+            // Helpers
+            // if *name != "ROOT" {
+            //     writeln!(
+            //         result,
+            //         "HELPER{label_id} [label=\"{}\", color=\"green\"]",
+            //         self.fmt_expr(*node_id)
+            //     )
+            //     .unwrap();
+            //     writeln!(result, "HELPER{label_id} -> {}", node_id).unwrap();
+            // }
+
+            subtree.extend(self.traverse_subtree(*node_id).map(|(id, _)| id));
         }
 
         subtree = subtree
@@ -89,7 +101,7 @@ impl Graph {
         match &config {
             DebugConfig::Enabled { dump_path, .. } => {
                 self.debug_config = config.clone();
-                fs::remove_dir(dump_path).unwrap_or_default();
+                fs::remove_dir_all(dump_path).unwrap_or_default();
                 fs::create_dir(dump_path).unwrap_or_default();
             }
             _ => unimplemented!(),
@@ -112,7 +124,36 @@ impl Graph {
         }
     }
 
-    fn subtree_under(&self, node: usize) -> Vec<usize> {
-        self.traverse_subtree(node).map(|(id, _)| id).collect()
+    pub fn integrity_check(&self) {
+        if self.is_debug_enabled() {
+            self.debug_print_normalized();
+            for id in self.traverse_subtree(self.root).map(|(id, _)| id) {
+                if let Node::Lambda { argument, body } = &self.graph[id] {
+                    for (expr, lambda_depth) in self.traverse_subtree(*body) {
+                        match &self.graph[expr] {
+                            Node::Var {
+                                name,
+                                kind: VariableKind::Bound { depth },
+                            } if *depth == lambda_depth + 1 => {
+                                if name != argument {
+                                    println!(
+                                        "{}",
+                                        self.fmt_expr(self.unwrap_closure_chain(self.root))
+                                    );
+                                    println!(
+                                        "Variable ({expr}) bound to lambda abstraction ({id}) "
+                                    );
+                                    dbg!(&self.graph[expr]);
+                                    dbg!(&self.graph[id]);
+                                    self.dump_debug_frames();
+                                    panic!("Integrity check failed");
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                };
+            }
+        }
     }
 }

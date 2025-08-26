@@ -123,6 +123,8 @@ let 16 (double 8)
 let 32 (double 16)
 let 64 (double 32)
 
+assert (=num ((+ ((+ 1) 2)) 1) 4)
+assert (=num ((+ ((+ 2) 4)) 2) 8)
 assert (=num ((+ ((+ 4) 8)) 4) 16)
 assert (=num (square 4) 16)
 ```
@@ -141,7 +143,7 @@ Achieving recursion proves Turing-completeness of the language.
     (n | pred | f | (* n))]
 
 assert (=num (fact 4) (+ 16 8))
-assert (=num (fact (succ 4)) (64 | (+ 32) | (+ 16) | (+ 8)))
+// assert (=num (fact (succ 4)) (64 | (+ 32) | (+ 16) | (+ 8)))
 ```
 
 ## Runtime

@@ -4,6 +4,7 @@ use smallvec::SmallVec;
 
 mod debug;
 mod reduction;
+mod strong;
 
 #[derive(Debug, Clone)]
 pub enum VariableKind {
@@ -31,7 +32,7 @@ pub enum Node {
     Consumed(String),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Graph {
     graph: SmallVec<[Node; 1024]>,
     pub root: usize,
@@ -85,35 +86,19 @@ impl Graph {
             Node::Consumed(_) => self.panic_consumed_node(expr),
         }
     }
-    fn fmt_expr(&self, f: &mut std::fmt::Formatter<'_>, expr: usize) -> std::fmt::Result {
+    pub fn fmt_expr(&self, expr: usize) -> String {
         match &self.graph[expr] {
-            Node::Var { name, .. } => write!(f, "{}", name),
-            Node::Lambda { argument, body, .. } => {
-                write!(f, "λ{}", argument)?;
-                write!(f, ".")?;
-                self.fmt_expr(f, *body)
-            }
+            Node::Var { name, .. } => name.to_string(),
+            Node::Lambda { body, argument } => format!("λ{}.{}", argument, self.fmt_expr(*body)),
             Node::Call {
                 function,
                 parameter,
                 ..
-            } => {
-                write!(f, "(")?;
-                match self.graph[*function] {
-                    Node::Lambda { .. } => {
-                        write!(f, "(")?;
-                        self.fmt_expr(f, *function)?;
-                        write!(f, ")")?;
-                    }
-                    _ => self.fmt_expr(f, *function)?,
-                }
-                write!(f, " ")?;
-
-                // We can avoid wrapping argument in (),
-                // even if it's a Lambda, because closing paren follows anyway
-                self.fmt_expr(f, *parameter)?;
-                write!(f, ")")
-            }
+            } => format!(
+                "({} {})",
+                self.fmt_expr(*function),
+                self.fmt_expr(*parameter)
+            ),
             Node::Consumed(_) => self.panic_consumed_node(expr),
         }
     }
@@ -125,6 +110,6 @@ impl Graph {
 
 impl Display for Graph {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.fmt_expr(f, self.root)
+        write!(f, "{}", self.fmt_expr(self.root))
     }
 }

@@ -71,13 +71,15 @@ fn main() {
                     let hash = hasher.finish();
                     format!("./debug/{}", hash)
                 };
-                graph.enable_debug(DebugConfig::Enabled {
-                    dump_path,
-                    auto_dump_every: 100,
-                });
+                if false {
+                    graph.enable_debug(DebugConfig::Enabled {
+                        dump_path,
+                        auto_dump_every: 100,
+                    });
+                }
 
-                graph.evaluate(graph.root, &mut vec![]);
-                let root = graph.unwrap_closure_chain(graph.root, vec![]);
+                graph.evaluate(graph.root);
+                let root = graph.unwrap_closure_chain(graph.root);
                 graph.root = root;
                 println!(" => {}", graph);
                 println!("||  {} nodes", graph.size());
