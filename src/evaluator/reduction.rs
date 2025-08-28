@@ -4,6 +4,34 @@ use std::mem;
 
 use crate::evaluator::{Graph, Node, VariableKind};
 
+#[derive(Debug)]
+struct ClosurePath(pub Vec<usize>);
+
+impl ClosurePath {
+    fn new() -> Self {
+        ClosurePath(Vec::new())
+    }
+    fn get_at_depth(&self, depth: usize) -> usize {
+        self.0[self.0.len() - depth]
+    }
+
+    fn register(&mut self, closure_id: usize) {
+        self.0.push(closure_id);
+    }
+    fn register_after_depth(&mut self, closure_id: usize, depth: usize) {
+        self.0.insert(self.0.len() + 1 - depth, closure_id);
+    }
+
+    fn backtrack_before_closure(&mut self, closure_id: usize) -> Vec<usize> {
+        let index = self.0.iter().rposition(|id| *id == closure_id).unwrap();
+        let result = self.0.split_off(index);
+        result
+    }
+    fn restore_backtrack(&mut self, mut rest: Vec<usize>) {
+        self.0.append(&mut rest);
+    }
+}
+
 impl Graph {
     pub fn clone_subtree(&mut self, id: usize) -> usize {
         let mut node = self.graph[id].clone();
@@ -48,7 +76,8 @@ impl Graph {
         })
     }
 
-    pub fn lift(&mut self, expr: usize) {
+    /// Perform *lift* inference rule and returns ID of new closure
+    pub fn lift(&mut self, expr: usize) -> usize {
         let (outer_call, inner_call, lambda) = match self.graph[expr] {
             Node::Call {
                 function: inner_call,
@@ -58,11 +87,11 @@ impl Graph {
                     function: lambda, ..
                 } => match self.graph[lambda] {
                     Node::Lambda { .. } => (expr, inner_call, lambda),
-                    _ => return,
+                    _ => unreachable!(),
                 },
-                _ => return,
+                _ => unreachable!(),
             },
-            _ => return,
+            _ => unreachable!(),
         };
 
         let mut buffer = mem::replace(
@@ -75,18 +104,19 @@ impl Graph {
                 Node::Lambda { body, .. } => {
                     mem::swap(function, body);
                 }
-                _ => {
-                    dbg!(&self.graph[lambda]);
-                    unreachable!();
-                }
+                _ => unreachable!(),
             },
             _ => unreachable!(),
         }
 
         mem::swap(&mut buffer, &mut self.graph[inner_call]);
         mem::swap(&mut buffer, &mut self.graph[outer_call]);
+
+        inner_call
     }
-    pub fn assoc(&mut self, expr: usize) {
+
+    /// Perform *assoc* inference rule and returns ID of new closure
+    pub fn assoc(&mut self, expr: usize) -> usize {
         let (outer_call, inner_call, lambda) = match self.graph[expr] {
             Node::Call {
                 parameter: inner_call,
@@ -97,17 +127,17 @@ impl Graph {
                 } => match self.graph[lambda] {
                     Node::Lambda { .. } => (expr, inner_call, lambda),
 
-                    _ => return,
+                    _ => unreachable!(),
                 },
 
-                _ => return,
+                _ => unreachable!(),
             },
-            _ => return,
+            _ => unreachable!(),
         };
 
         let mut buffer = mem::replace(
             &mut self.graph[outer_call],
-            Node::Consumed("Lift".to_string()),
+            Node::Consumed("Assoc".to_string()),
         );
 
         match &mut buffer {
@@ -122,6 +152,8 @@ impl Graph {
 
         mem::swap(&mut buffer, &mut self.graph[inner_call]);
         mem::swap(&mut buffer, &mut self.graph[outer_call]);
+
+        inner_call
     }
 
     fn is_value(&self, expr: usize) -> bool {
@@ -169,57 +201,8 @@ impl Graph {
         }
     }
 
-    /// Finds the sequence of closure nodes that contains target expression
-    pub fn find_closure_path(&self, expr: usize, target: usize, path: &mut Vec<usize>) -> bool {
-        if expr == target {
-            return true;
-        }
-        match &self.graph[expr] {
-            Node::Lambda { body, .. } => {
-                if self.find_closure_path(*body, target, path) {
-                    return true;
-                }
-            }
-            Node::Call {
-                function,
-                parameter,
-            } => {
-                let is_closure = matches!(self.graph[*function], Node::Lambda { .. });
-                if is_closure {
-                    path.push(expr);
-                }
-                if self.find_closure_path(*function, target, path) {
-                    return true;
-                }
-                if is_closure {
-                    path.pop();
-                }
-                if self.find_closure_path(*parameter, target, path) {
-                    return true;
-                }
-            }
-            _ => {}
-        }
-        false
-    }
-
-    fn find_binding_closure(&mut self, expr: usize) -> usize {
-        let mut levels = Vec::new();
-        self.find_closure_path(self.root, expr, &mut levels);
-
-        let depth = match self.graph[expr] {
-            Node::Var {
-                kind: VariableKind::Bound { depth },
-                ..
-            } => depth,
-            _ => unreachable!(),
-        };
-
-        levels[levels.len() - depth]
-    }
-
     /// Evaluates given expression to an ANSWER
-    pub fn evaluate(&mut self, expr: usize) {
+    fn evaluate(&mut self, expr: usize, closure_path: &mut ClosurePath) {
         if self.is_debug_enabled() {
             self.add_debug_frame(vec![(expr, "eval")]);
             self.integrity_check();
@@ -230,11 +213,13 @@ impl Graph {
                 function,
                 parameter,
             } => {
-                self.evaluate(function);
+                self.evaluate(function, closure_path);
 
                 if self.is_value(function) {
                     if let Node::Lambda { body, .. } = self.graph[function] {
-                        self.evaluate(body);
+                        closure_path.register(expr);
+                        self.evaluate(body, closure_path);
+                        closure_path.backtrack_before_closure(expr);
                     }
                 } else {
                     // Closure on function position: LIFT
@@ -243,15 +228,16 @@ impl Graph {
                     }
                     self.lift(expr);
                     self.adjust_depth(parameter, 1); // Lift will add 1 binder
-                                                     // Restart evaluation of this node
-                    self.evaluate(expr)
+
+                    // Restart evaluation of this node
+                    self.evaluate(expr, closure_path)
                 }
             }
             Node::Var {
                 kind: VariableKind::Bound { depth },
                 ..
             } => {
-                let binding_closure_id = self.find_binding_closure(expr);
+                let binding_closure_id = closure_path.get_at_depth(depth);
 
                 match self.graph[binding_closure_id] {
                     Node::Call {
@@ -259,7 +245,9 @@ impl Graph {
                         function,
                     } => {
                         // Compute an answer on parameter position of a binding closure
-                        self.evaluate(parameter);
+                        let rest = closure_path.backtrack_before_closure(binding_closure_id);
+                        self.evaluate(parameter, closure_path);
+                        closure_path.restore_backtrack(rest);
 
                         if self.is_value(parameter) {
                             // Parameter is a value now, time to deref!
@@ -283,10 +271,11 @@ impl Graph {
                                 ]);
                             }
                             self.adjust_depth(function, 1); // Assoc will add 1 binder
-                            self.assoc(binding_closure_id);
+                            let new_closure = self.assoc(binding_closure_id);
+                            closure_path.register_after_depth(new_closure, depth);
 
                             // Restart evaluation of this node
-                            self.evaluate(expr)
+                            self.evaluate(expr, closure_path)
                         }
                     }
                     _ => unreachable!("Closure must be a call node"),
@@ -294,6 +283,10 @@ impl Graph {
             }
             _ => {} // Everything else is already a value
         }
+    }
+
+    pub fn evaluate_root(&mut self) {
+        self.evaluate(self.root, &mut ClosurePath::new());
     }
 
     pub fn unwrap_closure_chain(&self, expr: usize) -> usize {

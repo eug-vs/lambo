@@ -78,7 +78,7 @@ fn main() {
                     });
                 }
 
-                graph.evaluate(graph.root);
+                graph.evaluate_root();
                 let root = graph.unwrap_closure_chain(graph.root);
                 graph.root = root;
                 println!(" => {}", graph);
