@@ -237,48 +237,57 @@ impl Graph {
                 kind: VariableKind::Bound { depth },
                 ..
             } => {
-                let binding_closure_id = closure_path.get_at_depth(depth);
+                // Compute an answer on parameter position of a binding closure
+                {
+                    let binding_closure_id = closure_path.get_at_depth(depth);
+                    let parameter = match self.graph[binding_closure_id] {
+                        Node::Call { parameter, .. } => parameter,
+                        _ => unreachable!(),
+                    };
 
-                match self.graph[binding_closure_id] {
-                    Node::Call {
-                        parameter,
-                        function,
-                    } => {
-                        // Compute an answer on parameter position of a binding closure
-                        let rest = closure_path.backtrack_before_closure(binding_closure_id);
-                        self.evaluate(parameter, closure_path);
-                        closure_path.restore_backtrack(rest);
+                    let rest = closure_path.backtrack_before_closure(binding_closure_id);
+                    self.evaluate(parameter, closure_path);
+                    closure_path.restore_backtrack(rest);
+                }
 
-                        if self.is_value(parameter) {
-                            // Parameter is a value now, time to deref!
-                            if self.is_debug_enabled() {
-                                self.add_debug_frame(vec![
-                                    (expr, "deref"),
-                                    (parameter, "with this"),
-                                ]);
-                            }
+                let mut assoc_closures_created = 0;
+                loop {
+                    let binding_closure_id = closure_path.get_at_depth(depth);
+                    let (function, parameter) = match self.graph[binding_closure_id] {
+                        Node::Call {
+                            parameter,
+                            function,
+                        } => (function, parameter),
+                        _ => unreachable!(),
+                    };
 
-                            let cloned_id = self.clone_subtree(parameter);
-                            self.adjust_depth(cloned_id, depth);
-                            self.graph.swap(expr, cloned_id);
-                        } else {
-                            // Apply assoc if we have closure on parameter position
-                            if self.is_debug_enabled() {
-                                self.add_debug_frame(vec![
-                                    (expr, "hole in context"),
-                                    (parameter, "parameter"),
-                                    (binding_closure_id, "assoc"),
-                                ]);
-                            }
-                            self.adjust_depth(function, 1); // Assoc will add 1 binder
-                            let new_closure = self.assoc(binding_closure_id);
-                            closure_path.register_after_depth(new_closure, depth);
-
-                            // Restart evaluation of this node
-                            self.evaluate(expr, closure_path)
+                    if self.is_value(parameter) {
+                        if assoc_closures_created > 0 {
+                            self.adjust_depth(function, assoc_closures_created);
                         }
+
+                        // Parameter is a value now, time to deref!
+                        if self.is_debug_enabled() {
+                            self.add_debug_frame(vec![(expr, "deref"), (parameter, "with this")]);
+                        }
+
+                        let cloned_id = self.clone_subtree(parameter);
+                        self.adjust_depth(cloned_id, depth);
+                        self.graph.swap(expr, cloned_id);
+                        break;
+                    } else {
+                        // Apply assoc if we have closure on parameter position
+                        if self.is_debug_enabled() {
+                            self.add_debug_frame(vec![
+                                (expr, "hole in context"),
+                                (parameter, "parameter"),
+                                (binding_closure_id, "assoc"),
+                            ]);
+                        }
+                        let new_closure = self.assoc(binding_closure_id);
+                        closure_path.register_after_depth(new_closure, depth);
+                        assoc_closures_created += 1;
                     }
-                    _ => unreachable!("Closure must be a call node"),
                 }
             }
             _ => {} // Everything else is already a value
