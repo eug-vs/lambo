@@ -209,28 +209,41 @@ impl Graph {
         }
 
         match self.graph[expr] {
-            Node::Call {
-                function,
-                parameter,
-            } => {
+            Node::Call { function, .. } => {
                 self.evaluate(function, closure_path);
 
-                if self.is_value(function) {
-                    if let Node::Lambda { body, .. } = self.graph[function] {
-                        closure_path.register(expr);
-                        self.evaluate(body, closure_path);
-                        closure_path.backtrack_before_closure(expr);
-                    }
-                } else {
-                    // Closure on function position: LIFT
-                    if self.is_debug_enabled() {
-                        self.add_debug_frame(vec![(expr, "lift")]);
-                    }
-                    self.lift(expr);
-                    self.adjust_depth(parameter, 1); // Lift will add 1 binder
+                let mut lift_closures_created = 0;
+                let mut last_expr = expr;
+                loop {
+                    let (function, parameter) = match self.graph[last_expr] {
+                        Node::Call {
+                            parameter,
+                            function,
+                        } => (function, parameter),
+                        _ => unreachable!(),
+                    };
 
-                    // Restart evaluation of this node
-                    self.evaluate(expr, closure_path)
+                    if self.is_value(function) {
+                        if lift_closures_created > 0 {
+                            self.adjust_depth(parameter, lift_closures_created);
+                        }
+
+                        if let Node::Lambda { body, .. } = self.graph[function] {
+                            closure_path.register(last_expr);
+                            self.evaluate(body, closure_path);
+                            closure_path.backtrack_before_closure(expr);
+                        }
+                        break;
+                    } else {
+                        // Closure on function position: LIFT
+                        if self.is_debug_enabled() {
+                            self.add_debug_frame(vec![(last_expr, "lift")]);
+                        }
+                        self.lift(last_expr);
+                        closure_path.register(last_expr);
+                        last_expr = function;
+                        lift_closures_created += 1;
+                    }
                 }
             }
             Node::Var {
