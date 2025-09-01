@@ -156,7 +156,7 @@ impl Graph {
         inner_call
     }
 
-    fn lift_mfe(&mut self, expr: usize, mfe: usize, expr_depth: usize) {
+    fn lift_mfe(&mut self, expr: usize, mfe: usize, expr_depth: usize) -> usize {
         // let name = format!("mfe_extracted_{}", self.fmt_expr(mfe));
         let name = "mfe".to_string();
         let var = self.add_node(Node::Var {
@@ -175,7 +175,9 @@ impl Graph {
             function: lambda,
             parameter: var,
         });
-        self.graph.swap(call, expr)
+        self.graph.swap(call, expr);
+
+        call
     }
 
     fn is_value(&self, expr: usize) -> bool {
@@ -198,6 +200,9 @@ impl Graph {
     /// Finds **locally free** variables in the subtree and
     /// adjusts their depth by some amount, usually after losing/gaining a binder
     pub fn adjust_depth(&mut self, expr: usize, by: isize) {
+        if by == 0 {
+            return;
+        }
         let locally_free_variables = self
             .traverse_subtree(expr)
             .filter(|&(id, lambdas_gained_from_root)| {
@@ -308,23 +313,32 @@ impl Graph {
                         }
 
                         // PERF: Lift any MFE found in parameter
-                        // TODO: batch-extract *all* MFEs at once
                         if let Node::Lambda { .. } = &self.graph[parameter] {
-                            if let Some((mfe, mfe_depth)) = self.find_mfe(parameter, 0) {
-                                if mfe != parameter {
-                                    if self.is_debug_enabled() {
-                                        self.add_debug_frame(vec![
-                                            (mfe, format!("MFE at depth {}", mfe_depth).as_str()),
-                                            (parameter, "in expr"),
-                                        ]);
-                                    }
-                                    // Parameter will gain 1 binder
-                                    self.adjust_depth(parameter, 1);
-                                    // But MFE itself will lose some binders (minus the one we just added)
-                                    self.adjust_depth(mfe, -((mfe_depth + 1) as isize));
-                                    self.lift_mfe(parameter, mfe, mfe_depth);
-                                    return self.evaluate(expr, closure_path);
+                            let mut mfes = vec![];
+                            self.find_mfe(parameter, 0, &mut mfes);
+                            mfes = mfes
+                                .into_iter()
+                                .filter(|&(id, _)| id != parameter)
+                                .collect();
+
+                            let mfes_count = mfes.len();
+
+                            let mut parameter = parameter;
+                            for (mfe, mfe_depth) in mfes {
+                                if self.is_debug_enabled() {
+                                    self.add_debug_frame(vec![
+                                        (mfe, format!("MFE at depth {}", mfe_depth).as_str()),
+                                        (parameter, "in expr"),
+                                    ]);
                                 }
+                                // Parameter will gain 1 binder
+                                self.adjust_depth(parameter, 1);
+                                // But MFE itself will lose some binders (minus the one we just added)
+                                self.adjust_depth(mfe, -((mfe_depth + 1) as isize));
+                                parameter = self.lift_mfe(parameter, mfe, mfe_depth);
+                            }
+                            if mfes_count > 0 {
+                                return self.evaluate(expr, closure_path);
                             }
                         }
 
@@ -382,21 +396,21 @@ impl Graph {
             .all(|depth| depth > root_depth)
     }
 
-    fn find_mfe(&self, expr: usize, root_depth: usize) -> Option<(usize, usize)> {
+    fn find_mfe(&self, expr: usize, root_depth: usize, results: &mut Vec<(usize, usize)>) {
         match &self.graph[expr] {
             Node::Call {
                 function,
                 parameter,
             } => {
                 if self.is_mfe(expr, root_depth) {
-                    Some((expr, root_depth))
+                    results.push((expr, root_depth))
                 } else {
-                    self.find_mfe(*function, root_depth)
-                        .or_else(|| self.find_mfe(*parameter, root_depth))
+                    self.find_mfe(*function, root_depth, results);
+                    self.find_mfe(*parameter, root_depth, results);
                 }
             }
-            Node::Lambda { body, .. } => self.find_mfe(*body, root_depth + 1),
-            _ => None,
+            Node::Lambda { body, .. } => self.find_mfe(*body, root_depth + 1, results),
+            _ => {}
         }
     }
 }
