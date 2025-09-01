@@ -24,8 +24,8 @@ impl ClosurePath {
 
     fn backtrack_before_closure(&mut self, closure_id: usize) -> Vec<usize> {
         let index = self.0.iter().rposition(|id| *id == closure_id).unwrap();
-        let result = self.0.split_off(index);
-        result
+
+        self.0.split_off(index)
     }
     fn restore_backtrack(&mut self, mut rest: Vec<usize>) {
         self.0.append(&mut rest);
@@ -77,7 +77,7 @@ impl Graph {
     }
 
     /// Perform *lift* inference rule and returns ID of new closure
-    pub fn lift(&mut self, expr: usize) -> usize {
+    fn lift(&mut self, expr: usize) -> usize {
         let (outer_call, inner_call, lambda) = match self.graph[expr] {
             Node::Call {
                 function: inner_call,
@@ -116,7 +116,7 @@ impl Graph {
     }
 
     /// Perform *assoc* inference rule and returns ID of new closure
-    pub fn assoc(&mut self, expr: usize) -> usize {
+    fn assoc(&mut self, expr: usize) -> usize {
         let (outer_call, inner_call, lambda) = match self.graph[expr] {
             Node::Call {
                 parameter: inner_call,
@@ -156,6 +156,28 @@ impl Graph {
         inner_call
     }
 
+    fn lift_mfe(&mut self, expr: usize, mfe: usize, expr_depth: usize) {
+        // let name = format!("mfe_extracted_{}", self.fmt_expr(mfe));
+        let name = "mfe".to_string();
+        let var = self.add_node(Node::Var {
+            name: name.clone(),
+            kind: VariableKind::Bound {
+                depth: expr_depth + 1,
+            },
+        });
+        let lambda = self.add_node(Node::Lambda {
+            argument: name,
+            body: self.graph.len() + 1,
+        });
+        self.graph.swap(mfe, var);
+
+        let call = self.add_node(Node::Call {
+            function: lambda,
+            parameter: var,
+        });
+        self.graph.swap(call, expr)
+    }
+
     fn is_value(&self, expr: usize) -> bool {
         matches!(self.graph[expr], Node::Lambda { .. }) || (self.is_structure(expr))
     }
@@ -175,7 +197,7 @@ impl Graph {
 
     /// Finds **locally free** variables in the subtree and
     /// adjusts their depth by some amount, usually after losing/gaining a binder
-    pub fn adjust_depth(&mut self, expr: usize, by: usize) {
+    pub fn adjust_depth(&mut self, expr: usize, by: isize) {
         let locally_free_variables = self
             .traverse_subtree(expr)
             .filter(|&(id, lambdas_gained_from_root)| {
@@ -195,7 +217,13 @@ impl Graph {
                 Node::Var {
                     kind: VariableKind::Bound { depth },
                     ..
-                } => *depth += by,
+                } => {
+                    if by > 0 {
+                        *depth += by as usize;
+                    } else {
+                        *depth -= -by as usize;
+                    }
+                }
                 _ => unreachable!(),
             }
         }
@@ -279,13 +307,34 @@ impl Graph {
                             self.adjust_depth(function, assoc_closures_created);
                         }
 
+                        // PERF: Lift any MFE found in parameter
+                        // TODO: batch-extract *all* MFEs at once
+                        if let Node::Lambda { .. } = &self.graph[parameter] {
+                            if let Some((mfe, mfe_depth)) = self.find_mfe(parameter, 0) {
+                                if mfe != parameter {
+                                    if self.is_debug_enabled() {
+                                        self.add_debug_frame(vec![
+                                            (mfe, format!("MFE at depth {}", mfe_depth).as_str()),
+                                            (parameter, "in expr"),
+                                        ]);
+                                    }
+                                    // Parameter will gain 1 binder
+                                    self.adjust_depth(parameter, 1);
+                                    // But MFE itself will lose some binders (minus the one we just added)
+                                    self.adjust_depth(mfe, -((mfe_depth + 1) as isize));
+                                    self.lift_mfe(parameter, mfe, mfe_depth);
+                                    return self.evaluate(expr, closure_path);
+                                }
+                            }
+                        }
+
                         // Parameter is a value now, time to deref!
                         if self.is_debug_enabled() {
                             self.add_debug_frame(vec![(expr, "deref"), (parameter, "with this")]);
                         }
 
                         let cloned_id = self.clone_subtree(parameter);
-                        self.adjust_depth(cloned_id, depth);
+                        self.adjust_depth(cloned_id, depth as isize);
                         self.graph.swap(expr, cloned_id);
                         break;
                     } else {
@@ -319,5 +368,35 @@ impl Graph {
         };
 
         expr
+    }
+
+    fn is_mfe(&self, expr: usize, root_depth: usize) -> bool {
+        self.traverse_subtree(expr).all(|(id, _)| {
+            matches!(
+                self.graph[id],
+                Node::Var {
+                    kind: VariableKind::Bound { depth },
+                    ..
+                } if depth > root_depth
+            )
+        })
+    }
+
+    fn find_mfe(&self, expr: usize, root_depth: usize) -> Option<(usize, usize)> {
+        match &self.graph[expr] {
+            Node::Call {
+                function,
+                parameter,
+            } => {
+                if self.is_mfe(expr, root_depth) {
+                    Some((expr, root_depth))
+                } else {
+                    self.find_mfe(*function, root_depth)
+                        .or_else(|| self.find_mfe(*parameter, root_depth))
+                }
+            }
+            Node::Lambda { body, .. } => self.find_mfe(*body, root_depth + 1),
+            _ => None,
+        }
     }
 }

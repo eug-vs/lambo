@@ -36,7 +36,7 @@ impl Graph {
                     } else {
                         self.clone_subtree(parameter)
                     };
-                    self.adjust_depth(cloned_id, depth);
+                    self.adjust_depth(cloned_id, depth as isize);
                     self.graph.swap(target_id, cloned_id);
                 }
 
