@@ -371,15 +371,15 @@ impl Graph {
     }
 
     fn is_mfe(&self, expr: usize, root_depth: usize) -> bool {
-        self.traverse_subtree(expr).all(|(id, _)| {
-            matches!(
-                self.graph[id],
+        self.traverse_subtree(expr)
+            .filter_map(|(id, _)| match self.graph[id] {
                 Node::Var {
                     kind: VariableKind::Bound { depth },
                     ..
-                } if depth > root_depth
-            )
-        })
+                } => Some(depth),
+                _ => None,
+            })
+            .all(|depth| depth > root_depth)
     }
 
     fn find_mfe(&self, expr: usize, root_depth: usize) -> Option<(usize, usize)> {
