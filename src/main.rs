@@ -1,5 +1,5 @@
 use std::{
-    fs,
+    env, fs,
     hash::{DefaultHasher, Hash, Hasher},
 };
 
@@ -11,7 +11,8 @@ mod evaluator;
 mod parser;
 
 fn extract_from_markdown() -> Vec<String> {
-    let input = fs::read_to_string("./README.md").unwrap();
+    let path = env::args().nth(1).unwrap_or("README.md".to_string());
+    let input = fs::read_to_string(path).unwrap();
     let mut lines = Vec::new();
     let mut in_code_block = false;
 
