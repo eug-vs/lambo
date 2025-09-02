@@ -313,12 +313,12 @@ impl Graph {
                         }
 
                         // PERF: Lift any MFE found in parameter
-                        if let Node::Lambda { .. } = &self.graph[parameter] {
+                        if let Node::Lambda { body, .. } = &self.graph[parameter] {
                             let mut mfes = vec![];
                             self.find_mfe(parameter, 0, &mut mfes);
                             mfes = mfes
                                 .into_iter()
-                                .filter(|&(id, _)| id != parameter)
+                                .filter(|&(id, _)| id != parameter && id != *body)
                                 .collect();
 
                             let mfes_count = mfes.len();
@@ -384,33 +384,44 @@ impl Graph {
         expr
     }
 
-    fn is_mfe(&self, expr: usize, root_depth: usize) -> bool {
-        self.traverse_subtree(expr)
-            .filter_map(|(id, _)| match self.graph[id] {
-                Node::Var {
-                    kind: VariableKind::Bound { depth },
-                    ..
-                } => Some(depth),
-                _ => None,
-            })
-            .all(|depth| depth > root_depth)
-    }
-
-    fn find_mfe(&self, expr: usize, root_depth: usize, results: &mut Vec<(usize, usize)>) {
+    fn find_mfe(
+        &self,
+        expr: usize,
+        root_depth: usize,
+        results: &mut Vec<(usize, usize)>,
+    ) -> Option<usize> {
         match &self.graph[expr] {
+            // Locally bound variables can't be included in MFE
+            Node::Var {
+                kind: VariableKind::Bound { depth },
+                ..
+            } if *depth <= root_depth => None,
             Node::Call {
                 function,
                 parameter,
             } => {
-                if self.is_mfe(expr, root_depth) {
-                    results.push((expr, root_depth))
-                } else {
-                    self.find_mfe(*function, root_depth, results);
-                    self.find_mfe(*parameter, root_depth, results);
-                }
+                let function_mfe = self.find_mfe(*function, root_depth, results);
+                let param_mfe = self.find_mfe(*parameter, root_depth, results);
+
+                Option::zip(function_mfe, param_mfe).map(|(f, p)| {
+                    // If both parameter and function are MFEs,
+                    // remove them from results and add current expr instead
+                    for value_to_remove in [f, p] {
+                        match results.iter().position(|&(r, _)| r == value_to_remove) {
+                            Some(pos) => {
+                                results.remove(pos);
+                            }
+                            None => {}
+                        };
+                    }
+
+                    results.push((expr, root_depth));
+                    expr
+                })
             }
             Node::Lambda { body, .. } => self.find_mfe(*body, root_depth + 1, results),
-            _ => {}
+            // Everything else can be a part of MFE
+            _ => Some(expr),
         }
     }
 }
