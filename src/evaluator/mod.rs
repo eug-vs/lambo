@@ -1,7 +1,13 @@
-use std::fmt::Display;
+use std::{
+    fmt::{Debug, Display},
+    rc::Rc,
+};
 
 use smallvec::SmallVec;
 
+use builtins::BuiltinFunctionDeclaration;
+
+pub mod builtins;
 mod debug;
 mod reduction;
 mod strong;
@@ -24,17 +30,46 @@ pub enum DebugConfig {
     Disabled,
 }
 
-#[derive(Debug, Clone)]
-pub enum Node {
-    Var { name: String, kind: VariableKind },
-    Lambda { argument: String, body: usize },
-    Call { function: usize, parameter: usize },
-    Consumed(String),
+#[derive(Debug, Clone, Copy)]
+pub enum IO {
+    PutChar(usize),
+    GetChar,
+    Throw,
 }
 
 #[derive(Debug, Clone)]
+pub enum DataValue {
+    Number(usize),
+    IO(IO),
+}
+
+#[derive(Debug, Clone)]
+pub enum Node {
+    Var {
+        name: String,
+        kind: VariableKind,
+    },
+    Lambda {
+        argument: String,
+        body: usize,
+    },
+    Call {
+        function: usize,
+        parameter: usize,
+    },
+    /// Token represent a *body* of builtin function
+    Token {
+        declaration: Rc<BuiltinFunctionDeclaration>,
+        /// Childen - bound variables
+        variables: Vec<usize>,
+    },
+    Data(DataValue),
+    Consumed(String),
+}
+
+#[derive(Clone)]
 pub struct Graph {
-    graph: SmallVec<[Node; 1024]>,
+    pub graph: SmallVec<[Node; 1024]>,
     pub root: usize,
     debug_config: DebugConfig,
     debug_frames: SmallVec<[String; 1024]>,
@@ -55,6 +90,34 @@ impl Graph {
     pub fn add_node(&mut self, node: Node) -> usize {
         self.graph.push(node);
         self.graph.len() - 1
+    }
+
+    pub fn add_builtin(&mut self, declaration: Rc<BuiltinFunctionDeclaration>) -> usize {
+        let variables = declaration
+            .argument_names
+            .iter()
+            .rev()
+            .enumerate()
+            .map(|(index, name)| {
+                self.add_node(Node::Var {
+                    name: name.clone(),
+                    kind: VariableKind::Bound { depth: index + 1 },
+                })
+            })
+            .rev()
+            .collect();
+
+        let mut id = self.add_node(Node::Token {
+            declaration: declaration.clone(),
+            variables,
+        });
+        for argument in declaration.argument_names.iter().rev() {
+            id = self.add_node(Node::Lambda {
+                argument: argument.clone(),
+                body: id,
+            });
+        }
+        id
     }
 
     fn panic_consumed_node(&self, id: usize) -> ! {
@@ -83,6 +146,8 @@ impl Graph {
                 self.fmt_de_brujin(*function),
                 self.fmt_de_brujin(*parameter)
             ),
+            Node::Token { declaration, .. } => format!("TOKEN_{}", declaration.name),
+            Node::Data(value) => format!("{:?}", value),
             Node::Consumed(_) => self.panic_consumed_node(expr),
         }
     }
@@ -99,6 +164,8 @@ impl Graph {
                 self.fmt_expr(*function),
                 self.fmt_expr(*parameter)
             ),
+            Node::Token { declaration, .. } => format!("TOKEN_{}", declaration.name),
+            Node::Data(value) => format!("{:?}", value),
             Node::Consumed(_) => self.panic_consumed_node(expr),
         }
     }

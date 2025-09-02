@@ -1,7 +1,7 @@
 use std::{iter::Peekable, panic};
 
 use crate::{
-    evaluator::{Graph, Node, VariableKind},
+    evaluator::{builtins::BuiltinFunctionRegistry, DataValue, Graph, Node, VariableKind},
     parser::lexer::Token,
 };
 
@@ -20,6 +20,7 @@ pub fn parse_expr<I: Iterator<Item = Token>>(
     tokens: &mut Peekable<I>,
     min_binding_power: BindingPower,
     mut ctx: Vec<String>,
+    registry: &BuiltinFunctionRegistry,
 ) -> usize {
     let mut lhs = match tokens.next().unwrap() {
         Token::Symbol(name) => {
@@ -29,10 +30,23 @@ pub fn parse_expr<I: Iterator<Item = Token>>(
                 },
                 None => VariableKind::Free,
             };
-            graph.add_node(Node::Var {
-                name: name.clone(),
-                kind,
-            })
+            if matches!(kind, VariableKind::Free) {
+                if let Some(declaration) = registry.get(&name) {
+                    graph.add_builtin(declaration.clone())
+                } else if let Ok(number) = name.parse::<usize>() {
+                    graph.add_node(Node::Data(DataValue::Number(number)))
+                } else {
+                    graph.add_node(Node::Var {
+                        name: name.clone(),
+                        kind,
+                    })
+                }
+            } else {
+                graph.add_node(Node::Var {
+                    name: name.clone(),
+                    kind,
+                })
+            }
         }
         Token::Lambda => {
             let variable_name = match tokens.next() {
@@ -54,14 +68,14 @@ pub fn parse_expr<I: Iterator<Item = Token>>(
                 token => panic!("Expected DOT, got: {:?}", token),
             }
             ctx.push(variable_name.clone());
-            let body = parse_expr(graph, tokens, 0, ctx.clone());
+            let body = parse_expr(graph, tokens, 0, ctx.clone(), registry);
             graph.add_node(Node::Lambda {
                 argument: variable_name,
                 body,
             })
         }
         Token::OpenParen => {
-            let result = parse_expr(graph, tokens, 0, ctx.clone());
+            let result = parse_expr(graph, tokens, 0, ctx.clone(), registry);
             match tokens.next() {
                 Some(Token::CloseParen) => {}
                 token => panic!("Expected CloseParen, got: {:?}", token),
@@ -73,14 +87,14 @@ pub fn parse_expr<I: Iterator<Item = Token>>(
                 Some(Token::Symbol(name)) => name,
                 token => panic!("Expected variable name, got: {:?}", token),
             };
-            let value = parse_expr(graph, tokens, 0, ctx.clone());
+            let value = parse_expr(graph, tokens, 0, ctx.clone(), registry);
             match tokens.next() {
                 Some(Token::In) => {}
                 token => panic!("Expected In, got: {:?}", token),
             };
 
             ctx.push(variable_name.clone());
-            let body = parse_expr(graph, tokens, 0, ctx.clone());
+            let body = parse_expr(graph, tokens, 0, ctx.clone(), registry);
             let lambda = graph.add_node(Node::Lambda {
                 argument: variable_name,
                 body,
@@ -113,7 +127,7 @@ pub fn parse_expr<I: Iterator<Item = Token>>(
             _ => {}
         };
 
-        let rhs = parse_expr(graph, tokens, r_bp, ctx.clone());
+        let rhs = parse_expr(graph, tokens, r_bp, ctx.clone(), registry);
 
         lhs = graph.add_node(match next_token {
             // Pipe swaps rhs and lhs: (value | f1 | f2) parses into (f2 (f1 value))

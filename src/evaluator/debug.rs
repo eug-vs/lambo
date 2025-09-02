@@ -68,6 +68,18 @@ impl Graph {
                         writeln!(result, "{id} [label=\"{id}: var {name} ({depth}) \"]").unwrap()
                     }
                 },
+                Node::Token {
+                    declaration,
+                    variables,
+                } => {
+                    writeln!(result, "{id} [label=\"{id}: TOKEN {}\"]", declaration.name).unwrap();
+                    for var in variables {
+                        writeln!(result, "{id} -> {var}").unwrap();
+                    }
+                }
+                Node::Data(value) => {
+                    writeln!(result, "{id} [label=\"{id}: {:?}\"]", value).unwrap()
+                }
                 Node::Consumed(by) => {
                     writeln!(result, "{id} [label=\"{id}: consoomed by {by}\"]").unwrap();
                 }

@@ -36,7 +36,7 @@ impl Graph {
     pub fn clone_subtree(&mut self, id: usize) -> usize {
         let mut node = self.graph[id].clone();
         match &mut node {
-            Node::Var { .. } => {}
+            Node::Var { .. } | Node::Data { .. } => {}
             Node::Lambda { body, .. } => *body = self.clone_subtree(*body),
             Node::Call {
                 function,
@@ -45,6 +45,11 @@ impl Graph {
             } => {
                 *function = self.clone_subtree(*function);
                 *parameter = self.clone_subtree(*parameter);
+            }
+            Node::Token { variables, .. } => {
+                for variable in variables {
+                    *variable = self.clone_subtree(*variable);
+                }
             }
             _ => unreachable!("{:?}", node),
         };
@@ -59,16 +64,21 @@ impl Graph {
 
         from_fn(move || {
             let (node, lambda_depth_to_root) = stack.pop()?;
-            match self.graph[node] {
+            match &self.graph[node] {
                 Node::Lambda { body, .. } => {
-                    stack.push((body, lambda_depth_to_root + 1));
+                    stack.push((*body, lambda_depth_to_root + 1));
                 }
                 Node::Call {
                     function,
                     parameter,
                 } => {
-                    stack.push((function, lambda_depth_to_root));
-                    stack.push((parameter, lambda_depth_to_root));
+                    stack.push((*function, lambda_depth_to_root));
+                    stack.push((*parameter, lambda_depth_to_root));
+                }
+                Node::Token { variables, .. } => {
+                    for variable in variables {
+                        stack.push((*variable, lambda_depth_to_root));
+                    }
                 }
                 _ => {}
             };
@@ -181,7 +191,8 @@ impl Graph {
     }
 
     fn is_value(&self, expr: usize) -> bool {
-        matches!(self.graph[expr], Node::Lambda { .. }) || (self.is_structure(expr))
+        matches!(self.graph[expr], Node::Lambda { .. } | Node::Data { .. })
+            || (self.is_structure(expr))
     }
 
     /// Structure is a sequence of applications with a frozen var in its head.
@@ -316,10 +327,7 @@ impl Graph {
                         if let Node::Lambda { body, .. } = &self.graph[parameter] {
                             let mut mfes = vec![];
                             self.find_mfe(parameter, 0, &mut mfes);
-                            mfes = mfes
-                                .into_iter()
-                                .filter(|&(id, _)| id != parameter && id != *body)
-                                .collect();
+                            mfes.retain(|&(id, _)| id != parameter && id != *body);
 
                             let mfes_count = mfes.len();
 
@@ -366,6 +374,25 @@ impl Graph {
                     }
                 }
             }
+            Node::Token { .. } => {
+                let (declaration, variables) = match &self.graph[expr] {
+                    Node::Token {
+                        declaration,
+                        variables,
+                    } => (declaration.clone(), variables.clone()),
+                    _ => unreachable!(),
+                };
+
+                for variable in &variables {
+                    self.evaluate(*variable, closure_path);
+                }
+
+                let result_id = (declaration.to_value)(self, variables);
+                self.graph.swap(expr, result_id);
+
+                // Make sure result is a value!
+                self.evaluate(expr, closure_path);
+            }
             _ => {} // Everything else is already a value
         }
     }
@@ -407,11 +434,8 @@ impl Graph {
                     // If both parameter and function are MFEs,
                     // remove them from results and add current expr instead
                     for value_to_remove in [f, p] {
-                        match results.iter().position(|&(r, _)| r == value_to_remove) {
-                            Some(pos) => {
-                                results.remove(pos);
-                            }
-                            None => {}
+                        if let Some(pos) = results.iter().position(|&(r, _)| r == value_to_remove) {
+                            results.remove(pos);
                         };
                     }
 

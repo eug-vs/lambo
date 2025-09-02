@@ -3,7 +3,10 @@ use std::{
     hash::{DefaultHasher, Hash, Hasher},
 };
 
-use crate::evaluator::{DebugConfig, Graph};
+use crate::evaluator::{
+    builtins::{arithmetic::register_arithmetic, io::register_io, BuiltinFunctionRegistry},
+    DataValue, DebugConfig, Graph, Node,
+};
 mod evaluator;
 mod parser;
 
@@ -26,6 +29,10 @@ fn extract_from_markdown() -> Vec<String> {
 }
 
 fn main() {
+    let mut registry = BuiltinFunctionRegistry::new();
+    register_arithmetic(&mut registry);
+    register_io(&mut registry);
+
     let mut context = vec![];
 
     let extracted = extract_from_markdown();
@@ -62,8 +69,10 @@ fn main() {
                 let input = &words.collect::<Vec<_>>().join(" ");
                 println!();
                 println!("$   {}", input);
-                let mut graph =
-                    Graph::from_str(format!("{} {}", context.join(" "), input).as_str());
+                let mut graph = Graph::from_str(
+                    format!("{} {}", context.join(" "), input).as_str(),
+                    &registry,
+                );
 
                 let dump_path = {
                     let mut hasher = DefaultHasher::new();
@@ -80,10 +89,18 @@ fn main() {
 
                 graph.evaluate_root();
                 let root = graph.unwrap_closure_chain(graph.root);
-                graph.root = root;
-                println!(" => {}", graph);
+
+                match graph.graph[root] {
+                    Node::Data(DataValue::IO(io)) => {
+                        graph.run_io(io);
+                    }
+                    _ => {
+                        println!(" => {}", graph.fmt_expr(root));
+                    }
+                };
                 println!("||  {} nodes", graph.size());
 
+                graph.add_debug_frame(vec![]);
                 graph.dump_debug_frames();
             }
         }
