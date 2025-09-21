@@ -196,7 +196,7 @@ impl Graph {
 
     fn is_value(&self, expr: usize) -> bool {
         match self.graph[expr] {
-            Node::Lambda { .. } => true,
+            Node::Lambda { .. } | Node::Primitive { .. } => true,
             Node::Data { tag, .. } => tag.is_value(),
             _ => self.is_structure(expr),
         }
@@ -374,6 +374,7 @@ impl Graph {
                                 (parameter, "parameter"),
                                 (binding_closure_id, "assoc"),
                             ]);
+                            self.dump_debug_frames();
                         }
                         let new_closure = self.assoc(binding_closure_id);
                         closure_path.register_after_depth(new_closure, depth);

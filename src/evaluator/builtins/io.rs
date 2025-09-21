@@ -4,7 +4,7 @@ use crate::evaluator::{
     builtins::ConstructorTag, reduction::ClosurePath, Graph, Node, Primitive, VariableKind,
 };
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Copy)]
 pub enum IOTag {
     GetChar,
     PutChar,
@@ -27,8 +27,9 @@ impl IOTag {
         closure_path: &mut ClosurePath,
         arguments: Vec<usize>,
     ) -> usize {
-        let transform = arguments[0];
-        let io = arguments[1];
+        let [transform, io] = *arguments.as_slice() else {
+            panic!("Incorrect arguments to IOFlatmap")
+        };
 
         graph.evaluate(io, closure_path);
 
@@ -47,23 +48,21 @@ impl IOTag {
                 IOTag::PutChar => {
                     let char_code_id = constructor_params[0];
                     graph.evaluate(char_code_id, closure_path);
-                    match graph.graph[char_code_id] {
-                        Node::Primitive(Primitive::Number(char_code)) => {
-                            print!("{}", char::from_u32(char_code as u32).unwrap());
-                            graph.add_node(Node::Var {
-                                name: "#PUTCHAR_FINISHED".to_string(),
-                                kind: VariableKind::Free,
-                            })
-                        }
-                        _ => panic!("Expected number for charcode"),
-                    }
+
+                    let char_code = graph.graph[char_code_id]
+                        .extract_primitive_number()
+                        .expect("Expected number for charcode");
+
+                    print!("{}", char::from_u32(char_code as u32).unwrap());
+                    graph.add_node(Node::Var {
+                        name: "#PUTCHAR_FINISHED".to_string(),
+                        kind: VariableKind::Free,
+                    })
                 }
-                IOTag::Throw => {
-                    panic!("#io_throw was called explicitly")
-                }
+                IOTag::Throw => graph.panic("#io_throw was called explicitly"),
                 IOTag::Flatmap => panic!("#io_flatmap is not an effectful IO"),
             },
-            node => panic!("Expected IO, found {:?}", node),
+            node => graph.panic(format!("Expected IO, found {:?}", node).as_str()),
         };
 
         let result = graph.add_node(Node::Call {

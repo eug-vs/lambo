@@ -27,9 +27,11 @@ pub enum DebugConfig {
     Disabled,
 }
 
+type Number = usize;
+
 #[derive(Debug, Clone)]
 pub enum Primitive {
-    Number(usize),
+    Number(Number),
 }
 
 #[derive(Debug, Clone)]
@@ -55,6 +57,15 @@ pub enum Node {
     Consumed(String),
 }
 
+impl Node {
+    fn extract_primitive_number(&self) -> Option<Number> {
+        match self {
+            Node::Primitive(Primitive::Number(number)) => Some(*number),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct Graph {
     pub graph: SmallVec<[Node; 1024]>,
@@ -62,6 +73,8 @@ pub struct Graph {
     debug_config: DebugConfig,
     debug_frames: SmallVec<[String; 1024]>,
     debug_last_dump_at: usize,
+
+    next_uid: usize,
 }
 
 impl Graph {
@@ -72,6 +85,7 @@ impl Graph {
             debug_config: DebugConfig::Disabled,
             debug_frames: SmallVec::new(),
             debug_last_dump_at: 0,
+            next_uid: 0,
         }
     }
 
@@ -110,9 +124,13 @@ impl Graph {
         id
     }
 
-    fn panic_consumed_node(&self, id: usize) -> ! {
+    fn panic(&self, msg: &str) -> ! {
         self.dump_debug_frames();
-        panic!("Tried to access a dead node: {id}");
+        panic!("{}", msg)
+    }
+
+    fn panic_consumed_node(&self, id: usize) -> ! {
+        self.panic(format!("Tried to access a dead node: {id}").as_str())
     }
 
     pub fn fmt_de_brujin(&self, expr: usize) -> String {
@@ -162,6 +180,12 @@ impl Graph {
 
     pub fn size(&self) -> usize {
         self.graph.len()
+    }
+
+    pub fn generate_uid(&mut self) -> usize {
+        let result = self.next_uid;
+        self.next_uid += 1;
+        result
     }
 }
 

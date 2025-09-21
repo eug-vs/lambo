@@ -1,6 +1,6 @@
-use crate::evaluator::{reduction::ClosurePath, Graph, Node, Primitive, VariableKind};
+use crate::evaluator::{reduction::ClosurePath, Graph, Node, Primitive};
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Copy)]
 pub enum ArithmeticTag {
     Add,
     Mul,
@@ -20,26 +20,18 @@ impl ArithmeticTag {
         closure_path: &mut ClosurePath,
         arguments: Vec<usize>,
     ) -> usize {
-        let [what, to] = arguments[0..2]
+        let [what, to] = arguments
             .iter()
             .map(|node| {
-                // All arithmetic is strict
+                // All arithmetic is strict in all parameters
                 graph.evaluate(*node, closure_path);
-                match graph.graph[*node] {
-                    Node::Primitive(Primitive::Number(number)) => number,
-                    _ => {
-                        graph.add_debug_frame(vec![(*node, "Expected number")]);
-                        graph.dump_debug_frames();
-                        panic!(
-                            "Expected Number while doing {:?}, got {:?}",
-                            self, graph.graph[*node]
-                        )
-                    }
-                }
+                graph.graph[*node]
+                    .extract_primitive_number()
+                    .expect("Expected number for arithmetic operation")
             })
             .collect::<Vec<_>>()
             .try_into()
-            .unwrap();
+            .expect("Incorrect argument count for arithmetic operation");
 
         let result = match self {
             Self::Eq => {
