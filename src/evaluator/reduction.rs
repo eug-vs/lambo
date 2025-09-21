@@ -5,7 +5,7 @@ use std::mem;
 use crate::evaluator::{Graph, Node, VariableKind};
 
 #[derive(Debug)]
-struct ClosurePath(pub Vec<usize>);
+pub struct ClosurePath(pub Vec<usize>);
 
 impl ClosurePath {
     fn new() -> Self {
@@ -36,7 +36,7 @@ impl Graph {
     pub fn clone_subtree(&mut self, id: usize) -> usize {
         let mut node = self.graph[id].clone();
         match &mut node {
-            Node::Var { .. } | Node::Data { .. } => {}
+            Node::Var { .. } | Node::Primitive { .. } => {}
             Node::Lambda { body, .. } => *body = self.clone_subtree(*body),
             Node::Call {
                 function,
@@ -46,9 +46,11 @@ impl Graph {
                 *function = self.clone_subtree(*function);
                 *parameter = self.clone_subtree(*parameter);
             }
-            Node::Token { variables, .. } => {
-                for variable in variables {
-                    *variable = self.clone_subtree(*variable);
+            Node::Data {
+                constructor_params, ..
+            } => {
+                for child in constructor_params {
+                    *child = self.clone_subtree(*child);
                 }
             }
             _ => unreachable!("{:?}", node),
@@ -75,9 +77,11 @@ impl Graph {
                     stack.push((*function, lambda_depth_to_root));
                     stack.push((*parameter, lambda_depth_to_root));
                 }
-                Node::Token { variables, .. } => {
-                    for variable in variables {
-                        stack.push((*variable, lambda_depth_to_root));
+                Node::Data {
+                    constructor_params, ..
+                } => {
+                    for child in constructor_params {
+                        stack.push((*child, lambda_depth_to_root));
                     }
                 }
                 _ => {}
@@ -191,8 +195,11 @@ impl Graph {
     }
 
     fn is_value(&self, expr: usize) -> bool {
-        matches!(self.graph[expr], Node::Lambda { .. } | Node::Data { .. })
-            || (self.is_structure(expr))
+        match self.graph[expr] {
+            Node::Lambda { .. } => true,
+            Node::Data { tag, .. } => tag.is_value(),
+            _ => self.is_structure(expr),
+        }
     }
 
     /// Structure is a sequence of applications with a frozen var in its head.
@@ -246,7 +253,7 @@ impl Graph {
     }
 
     /// Evaluates given expression to an ANSWER
-    fn evaluate(&mut self, expr: usize, closure_path: &mut ClosurePath) {
+    pub fn evaluate(&mut self, expr: usize, closure_path: &mut ClosurePath) {
         if self.is_debug_enabled() {
             self.add_debug_frame(vec![(expr, "eval")]);
             self.integrity_check();
@@ -374,24 +381,15 @@ impl Graph {
                     }
                 }
             }
-            Node::Token { .. } => {
-                let (declaration, variables) = match &self.graph[expr] {
-                    Node::Token {
-                        declaration,
-                        variables,
-                    } => (declaration.clone(), variables.clone()),
+            Node::Data { tag, .. } if !tag.is_value() => {
+                let params = match &self.graph[expr] {
+                    Node::Data {
+                        constructor_params, ..
+                    } => constructor_params.clone(),
                     _ => unreachable!(),
                 };
-
-                for variable in &variables {
-                    self.evaluate(*variable, closure_path);
-                }
-
-                let result_id = (declaration.to_value)(self, variables);
-                self.graph.swap(expr, result_id);
-
-                // Make sure result is a value!
-                self.evaluate(expr, closure_path);
+                let result = tag.evaluate(self, closure_path, params);
+                self.graph.swap(expr, result);
             }
             _ => {} // Everything else is already a value
         }

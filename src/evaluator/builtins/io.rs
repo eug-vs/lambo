@@ -1,89 +1,77 @@
-use std::{io::stdin, rc::Rc};
+use std::io::stdin;
 
 use crate::evaluator::{
-    builtins::{BuiltinFunctionDeclaration, BuiltinFunctionRegistry},
-    DataValue, Graph, Node, VariableKind, IO,
+    builtins::ConstructorTag, reduction::ClosurePath, Graph, Node, Primitive, VariableKind,
 };
 
-impl Graph {
-    pub fn run_io(&mut self, io: IO) -> usize {
-        match io {
-            IO::GetChar => {
-                let mut line = String::new();
-                stdin().read_line(&mut line).unwrap();
-                let number = line.trim().parse().unwrap();
-
-                self.add_node(Node::Data(DataValue::Number(number)))
-            }
-            IO::PutChar(char_code) => {
-                print!("{}", char::from_u32(char_code as u32).unwrap());
-                self.add_node(Node::Var {
-                    name: "#PUTCHAR_FINISHED".to_string(),
-                    kind: VariableKind::Free,
-                })
-            }
-            IO::Throw => {
-                panic!("#io_throw was called")
-            }
-        }
-    }
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+pub enum IOTag {
+    GetChar,
+    PutChar,
+    Throw,
+    Flatmap,
 }
 
-pub fn register_io(registry: &mut BuiltinFunctionRegistry) {
-    registry.insert(
-        "#io_getchar".to_string(),
-        Rc::new(BuiltinFunctionDeclaration {
-            name: "#io_getchar".to_string(),
-            argument_names: vec![],
-            to_value: Box::new(move |graph, _| {
-                graph.add_node(Node::Data(DataValue::IO(IO::GetChar)))
-            }),
-        }),
-    );
-    registry.insert(
-        "#io_putchar".to_string(),
-        Rc::new(BuiltinFunctionDeclaration {
-            name: "#io_putchar".to_string(),
-            argument_names: vec!["char_code".to_string()],
-            to_value: Box::new(move |graph, argument_ids| {
-                let node = argument_ids[0];
-                let char_code = match graph.graph[node] {
-                    Node::Data(DataValue::Number(number)) => number,
-                    _ => panic!("Expected Number, got {:?}", graph.graph[node]),
-                };
-                graph.add_node(Node::Data(DataValue::IO(IO::PutChar(char_code))))
-            }),
-        }),
-    );
-    registry.insert(
-        "#io_throw".to_string(),
-        Rc::new(BuiltinFunctionDeclaration {
-            name: "#io_throw".to_string(),
-            argument_names: vec!["unused_param".to_string()],
-            to_value: Box::new(move |graph, _| {
-                graph.add_node(Node::Data(DataValue::IO(IO::Throw)))
-            }),
-        }),
-    );
+impl IOTag {
+    pub fn argument_names(&self) -> Vec<&'static str> {
+        match self {
+            IOTag::Throw => vec![],
+            IOTag::GetChar => vec![],
+            IOTag::PutChar => vec!["char_code"],
+            IOTag::Flatmap => vec!["transform", "io"],
+        }
+    }
 
-    registry.insert(
-        "#io_flatmap".to_string(),
-        Rc::new(BuiltinFunctionDeclaration {
-            name: "#io_flatmap".to_string(),
-            argument_names: vec!["transform".to_string(), "io".to_string()],
-            to_value: Box::new(move |graph, argument_ids| -> usize {
-                graph.add_debug_frame(vec![]);
-                graph.dump_debug_frames();
-                let io = match &graph.graph[argument_ids[1]] {
-                    Node::Data(DataValue::IO(io)) => io,
-                    _ => panic!("Expected IO"),
-                };
-                let io_result = graph.run_io(*io);
-                graph.add_node(Node::Call {
-                    function: argument_ids[0],
-                    parameter: io_result,
-                })
-            }),
-        }),
-    );
+    pub fn flatmap(
+        graph: &mut Graph,
+        closure_path: &mut ClosurePath,
+        arguments: Vec<usize>,
+    ) -> usize {
+        let transform = arguments[0];
+        let io = arguments[1];
+
+        graph.evaluate(io, closure_path);
+
+        let io_result = match &graph.graph[io] {
+            Node::Data {
+                tag: ConstructorTag::IO(io_tag),
+                constructor_params,
+            } => match io_tag {
+                IOTag::GetChar => {
+                    let mut line = String::new();
+                    stdin().read_line(&mut line).unwrap();
+                    let number = line.trim().parse().unwrap();
+
+                    graph.add_node(Node::Primitive(Primitive::Number(number)))
+                }
+                IOTag::PutChar => {
+                    let char_code_id = constructor_params[0];
+                    graph.evaluate(char_code_id, closure_path);
+                    match graph.graph[char_code_id] {
+                        Node::Primitive(Primitive::Number(char_code)) => {
+                            print!("{}", char::from_u32(char_code as u32).unwrap());
+                            graph.add_node(Node::Var {
+                                name: "#PUTCHAR_FINISHED".to_string(),
+                                kind: VariableKind::Free,
+                            })
+                        }
+                        _ => panic!("Expected number for charcode"),
+                    }
+                }
+                IOTag::Throw => {
+                    panic!("#io_throw was called explicitly")
+                }
+                IOTag::Flatmap => panic!("#io_flatmap is not an effectful IO"),
+            },
+            node => panic!("Expected IO, found {:?}", node),
+        };
+
+        let result = graph.add_node(Node::Call {
+            function: transform,
+            parameter: io_result,
+        });
+        // Evaluate transform function with the result of IO
+        graph.evaluate(result, closure_path);
+        result
+    }
 }

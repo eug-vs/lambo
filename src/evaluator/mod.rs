@@ -1,11 +1,8 @@
-use std::{
-    fmt::{Debug, Display},
-    rc::Rc,
-};
+use std::fmt::{Debug, Display};
 
 use smallvec::SmallVec;
 
-use builtins::BuiltinFunctionDeclaration;
+use crate::evaluator::builtins::ConstructorTag;
 
 pub mod builtins;
 mod debug;
@@ -30,17 +27,9 @@ pub enum DebugConfig {
     Disabled,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum IO {
-    PutChar(usize),
-    GetChar,
-    Throw,
-}
-
 #[derive(Debug, Clone)]
-pub enum DataValue {
+pub enum Primitive {
     Number(usize),
-    IO(IO),
 }
 
 #[derive(Debug, Clone)]
@@ -57,13 +46,12 @@ pub enum Node {
         function: usize,
         parameter: usize,
     },
-    /// Token represent a *body* of builtin function
-    Token {
-        declaration: Rc<BuiltinFunctionDeclaration>,
-        /// Childen - bound variables
-        variables: Vec<usize>,
+    Primitive(Primitive),
+    /// Data is LAZY
+    Data {
+        tag: ConstructorTag,
+        constructor_params: Vec<usize>,
     },
-    Data(DataValue),
     Consumed(String),
 }
 
@@ -92,28 +80,30 @@ impl Graph {
         self.graph.len() - 1
     }
 
-    pub fn add_builtin(&mut self, declaration: Rc<BuiltinFunctionDeclaration>) -> usize {
-        let variables = declaration
-            .argument_names
+    /// Constructor is wrapped into explicit lambdas
+    pub fn add_constructor(&mut self, tag: ConstructorTag) -> usize {
+        let argument_names = tag.argument_names();
+        let variables = argument_names
             .iter()
             .rev()
             .enumerate()
             .map(|(index, name)| {
                 self.add_node(Node::Var {
-                    name: name.clone(),
+                    name: name.to_string(),
                     kind: VariableKind::Bound { depth: index + 1 },
                 })
             })
             .rev()
             .collect();
 
-        let mut id = self.add_node(Node::Token {
-            declaration: declaration.clone(),
-            variables,
+        let mut id = self.add_node(Node::Data {
+            tag,
+            constructor_params: variables,
         });
-        for argument in declaration.argument_names.iter().rev() {
+
+        for argument in argument_names.iter().rev() {
             id = self.add_node(Node::Lambda {
-                argument: argument.clone(),
+                argument: argument.to_string(),
                 body: id,
             });
         }
@@ -146,8 +136,8 @@ impl Graph {
                 self.fmt_de_brujin(*function),
                 self.fmt_de_brujin(*parameter)
             ),
-            Node::Token { declaration, .. } => format!("TOKEN_{}", declaration.name),
-            Node::Data(value) => format!("{:?}", value),
+            Node::Primitive(_) => format!("{}", expr),
+            Node::Data { .. } => format!("{:?}", expr),
             Node::Consumed(_) => self.panic_consumed_node(expr),
         }
     }
@@ -164,8 +154,8 @@ impl Graph {
                 self.fmt_expr(*function),
                 self.fmt_expr(*parameter)
             ),
-            Node::Token { declaration, .. } => format!("TOKEN_{}", declaration.name),
-            Node::Data(value) => format!("{:?}", value),
+            Node::Primitive(_) => format!("{}", expr),
+            Node::Data { .. } => format!("{:?}", expr),
             Node::Consumed(_) => self.panic_consumed_node(expr),
         }
     }

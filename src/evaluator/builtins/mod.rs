@@ -1,29 +1,74 @@
 use std::fmt::Debug;
-use std::{collections::HashMap, rc::Rc};
 
-use crate::evaluator::Graph;
+use crate::evaluator::{
+    builtins::{arithmetic::ArithmeticTag, io::IOTag},
+    reduction::ClosurePath,
+    Graph,
+};
 
 pub mod arithmetic;
 pub mod io;
 
-pub struct BuiltinFunctionDeclaration {
-    pub name: String,
-    /// How many arguments this function takes
-    pub argument_names: Vec<String>,
-    /// ()
-    pub to_value: Box<dyn Fn(&mut Graph, Vec<usize>) -> usize>,
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+pub enum ConstructorTag {
+    IO(IOTag),
+    Arithmetic(ArithmeticTag),
+    CustomTag { uid: usize, arity: usize },
 }
 
-impl BuiltinFunctionDeclaration {
+impl ConstructorTag {
+    pub fn from_str(str: &str) -> Option<Self> {
+        match str {
+            "#io_getchar" => Some(Self::IO(IOTag::GetChar)),
+            "#io_putchar" => Some(Self::IO(IOTag::PutChar)),
+            "#io_throw" => Some(Self::IO(IOTag::Throw)),
+            "#io_flatmap" => Some(Self::IO(IOTag::Flatmap)),
+
+            "=num" => Some(Self::Arithmetic(ArithmeticTag::Eq)),
+            "+" => Some(Self::Arithmetic(ArithmeticTag::Add)),
+            "-" => Some(Self::Arithmetic(ArithmeticTag::Sub)),
+            "*" => Some(Self::Arithmetic(ArithmeticTag::Mul)),
+            "/" => Some(Self::Arithmetic(ArithmeticTag::Div)),
+            "^" => Some(Self::Arithmetic(ArithmeticTag::Pow)),
+
+            _ => None,
+        }
+    }
+    pub fn argument_names(&self) -> Vec<&str> {
+        match self {
+            Self::IO(tag) => tag.argument_names(),
+            Self::Arithmetic(tag) => tag.argument_names(),
+            Self::CustomTag { arity, .. } => {
+                vec!["param"; *arity]
+            }
+        }
+    }
+
     pub fn arity(&self) -> usize {
-        self.argument_names.len()
+        self.argument_names().len()
+    }
+
+    pub fn is_value(&self) -> bool {
+        match self {
+            // It's cheaper to compute arithmetic immediately
+            // than to carry around lazy data
+            Self::Arithmetic(_) => false,
+            // Flatmap is the only non-lazy IO function
+            Self::IO(IOTag::Flatmap) => false,
+            _ => true,
+        }
+    }
+    pub fn evaluate(
+        &self,
+        graph: &mut Graph,
+        closure_path: &mut ClosurePath,
+        arguments: Vec<usize>,
+    ) -> usize {
+        match self {
+            Self::Arithmetic(tag) => tag.evaluate(graph, closure_path, arguments),
+            Self::IO(IOTag::Flatmap) => IOTag::flatmap(graph, closure_path, arguments),
+            tag if tag.is_value() => panic!("This constructor is already a value"),
+            _ => unreachable!(),
+        }
     }
 }
-
-impl Debug for BuiltinFunctionDeclaration {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "builtin {}-ary function {}", self.arity(), self.name)
-    }
-}
-
-pub type BuiltinFunctionRegistry = HashMap<String, Rc<BuiltinFunctionDeclaration>>;
