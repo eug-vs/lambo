@@ -55,7 +55,7 @@ impl IOTag {
 
                     print!("{}", char::from_u32(char_code as u32).unwrap());
                     graph.add_node(Node::Var {
-                        name: "#PUTCHAR_FINISHED".to_string(),
+                        name: "#PUTCHAR_FINISHED".to_string().into(),
                         kind: VariableKind::Free,
                     })
                 }

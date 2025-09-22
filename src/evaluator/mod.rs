@@ -1,4 +1,7 @@
-use std::fmt::{Debug, Display};
+use std::{
+    fmt::{Debug, Display},
+    rc::Rc,
+};
 
 use smallvec::SmallVec;
 
@@ -37,11 +40,11 @@ pub enum Primitive {
 #[derive(Debug, Clone)]
 pub enum Node {
     Var {
-        name: String,
+        name: Rc<String>,
         kind: VariableKind,
     },
     Lambda {
-        argument: String,
+        argument: Rc<String>,
         body: usize,
     },
     Call {
@@ -103,7 +106,7 @@ impl Graph {
             .enumerate()
             .map(|(index, name)| {
                 self.add_node(Node::Var {
-                    name: name.to_string(),
+                    name: Rc::new(name.to_string()),
                     kind: VariableKind::Bound { depth: index + 1 },
                 })
             })
@@ -117,7 +120,7 @@ impl Graph {
 
         for argument in argument_names.iter().rev() {
             id = self.add_node(Node::Lambda {
-                argument: argument.to_string(),
+                argument: Rc::new(argument.to_string()),
                 body: id,
             });
         }

@@ -1,6 +1,6 @@
-use std::collections::HashSet;
 use std::iter::from_fn;
 use std::mem;
+use std::{collections::HashSet, rc::Rc};
 
 use crate::evaluator::{Graph, Node, VariableKind};
 
@@ -172,7 +172,7 @@ impl Graph {
 
     fn lift_mfe(&mut self, expr: usize, mfe: usize, expr_depth: usize) -> usize {
         // let name = format!("mfe_extracted_{}", self.fmt_expr(mfe));
-        let name = "mfe".to_string();
+        let name = Rc::new("mfe".to_string());
         let var = self.add_node(Node::Var {
             name: name.clone(),
             kind: VariableKind::Bound {

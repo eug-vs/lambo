@@ -1,4 +1,4 @@
-use std::{iter::Peekable, panic};
+use std::{iter::Peekable, panic, rc::Rc};
 
 use crate::{
     evaluator::{builtins::ConstructorTag, Graph, Node, Primitive, VariableKind},
@@ -23,7 +23,8 @@ pub fn parse_expr<I: Iterator<Item = Token>>(
 ) -> usize {
     let mut lhs = match tokens.next().unwrap() {
         Token::Symbol(name) => {
-            let kind = match ctx.iter().rev().position(|n| *n == name) {
+            let name = Rc::new(name);
+            let kind = match ctx.iter().rev().position(|n| *n == *name) {
                 Some(depth) => VariableKind::Bound {
                     depth: depth + 1, // Just to avoid 0, purely sugar
                 },
@@ -35,16 +36,10 @@ pub fn parse_expr<I: Iterator<Item = Token>>(
                 } else if let Ok(number) = name.parse::<usize>() {
                     graph.add_node(Node::Primitive(Primitive::Number(number)))
                 } else {
-                    graph.add_node(Node::Var {
-                        name: name.clone(),
-                        kind,
-                    })
+                    graph.add_node(Node::Var { name, kind })
                 }
             } else {
-                graph.add_node(Node::Var {
-                    name: name.clone(),
-                    kind,
-                })
+                graph.add_node(Node::Var { name, kind })
             }
         }
         Token::Lambda => {
@@ -69,7 +64,7 @@ pub fn parse_expr<I: Iterator<Item = Token>>(
             ctx.push(variable_name.clone());
             let body = parse_expr(graph, tokens, 0, ctx.clone());
             graph.add_node(Node::Lambda {
-                argument: variable_name,
+                argument: Rc::new(variable_name),
                 body,
             })
         }
@@ -95,7 +90,7 @@ pub fn parse_expr<I: Iterator<Item = Token>>(
             ctx.push(variable_name.clone());
             let body = parse_expr(graph, tokens, 0, ctx.clone());
             let lambda = graph.add_node(Node::Lambda {
-                argument: variable_name,
+                argument: Rc::new(variable_name),
                 body,
             });
             graph.add_node(Node::Call {
