@@ -18,7 +18,11 @@ impl Graph {
 
         let mut subtree = HashSet::new();
         for (label_id, (node_id, name)) in once(&root_label).chain(labels.iter()).enumerate() {
-            writeln!(result, "LABEL{label_id} [label=\"{name}\", color=\"red\"]",).unwrap();
+            writeln!(
+                result,
+                "LABEL{label_id} [label=\"{name}\", fontcolor=\"white\" fillcolor=\"red\" style=\"filled\"]",
+            )
+            .unwrap();
             writeln!(result, "LABEL{label_id} -> {}", node_id).unwrap();
 
             // Helpers
