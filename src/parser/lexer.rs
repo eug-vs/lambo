@@ -55,7 +55,7 @@ pub fn lexer(input: &str) -> impl Iterator<Item = Token> {
             })
         })
         .map(|token| match token {
-            Token::Symbol(name) if name == "with" => Token::With,
+            Token::Symbol(name) if name == "with" || name == "let" => Token::With,
             Token::Symbol(name) if name == "in" => Token::In,
             _ => token,
         })

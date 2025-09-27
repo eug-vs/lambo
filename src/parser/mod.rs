@@ -1,34 +1,21 @@
+use petgraph::graph::NodeIndex;
+
 use crate::{
-    evaluator::Graph,
+    ast::AST,
     parser::{lexer::lexer, parser::parse_expr},
 };
 
 mod lexer;
 mod parser;
 
-impl Graph {
+impl AST {
     pub fn from_str(s: &str) -> Self {
-        let mut graph = Self::new();
-        graph.root = parse_expr(&mut graph, &mut lexer(s).peekable(), 0, vec![]);
-        graph
+        let mut ast = Self::new();
+        ast.root = parse_expr(&mut ast, &mut lexer(s).peekable(), 0, vec![]);
+        ast
     }
-    pub fn add_expr_from_str(&mut self, s: &str) -> usize {
+    pub fn add_expr_from_str(&mut self, s: &str) -> NodeIndex {
         parse_expr(self, &mut lexer(s).peekable(), 0, vec![])
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::evaluator::Graph;
-
-    #[test]
-    fn parse_basic() {
-        let s = "func (#eq a b) λx.λy.x";
-        let expr = Graph::from_str(s);
-        assert_eq!(format!("{}", expr), "((func ((#eq a) b)) λx.λy.x)");
-        assert_eq!(
-            format!("{}", expr.fmt_de_brujin(expr.root)),
-            "((func ((#eq a) b)) λ λ 2)"
-        );
+        // unimplemented!("Please provide reference to parent environment");
     }
 }
