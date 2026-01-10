@@ -21,28 +21,34 @@ pub fn parse_expr<I: Iterator<Item = Token>>(
     ast: &mut AST,
     tokens: &mut Peekable<I>,
     min_binding_power: BindingPower,
-    mut lambda_ctx: Vec<String>,
+    mut binder_ctx: Vec<NodeIndex>,
 ) -> NodeIndex {
     let mut lhs = match tokens.next().unwrap() {
         Token::Symbol(name) => {
             let name = Rc::new(name);
-            let kind = match lambda_ctx.iter().rev().position(|n| *n == *name) {
-                Some(depth) => VariableKind::Bound {
-                    depth: depth + 1, // Just to avoid 0, purely sugar
-                },
-                None => VariableKind::Free,
-            };
-            if matches!(kind, VariableKind::Free) {
-                if let Some(tag) = ConstructorTag::from_str(&name) {
-                    ast.add_constructor(tag)
-                } else if let Ok(number) = name.parse::<usize>() {
-                    ast.graph
-                        .add_node(Node::Primitive(Primitive::Number(number)))
-                } else {
-                    ast.graph.add_node(Node::Variable { name, kind })
+            match binder_ctx.iter().rfind(|index| {
+                if let Some(Node::Lambda { argument_name } | Node::Closure { argument_name }) =
+                    ast.graph.node_weight(**index)
+                {
+                    return *argument_name == name;
                 }
-            } else {
-                ast.graph.add_node(Node::Variable { name, kind })
+                panic!("lambda_ctx elements can only point to lambda/closure nodes")
+            }) {
+                Some(binder_id) => {
+                    let node = ast.graph.add_node(Node::Variable(VariableKind::Bound));
+                    ast.graph.add_edge(node, *binder_id, Edge::Binder);
+                    node
+                }
+                None => {
+                    if let Some(tag) = ConstructorTag::from_str(&name) {
+                        ast.add_constructor(tag)
+                    } else if let Ok(number) = name.parse::<usize>() {
+                        ast.graph
+                            .add_node(Node::Primitive(Primitive::Number(number)))
+                    } else {
+                        ast.graph.add_node(Node::Variable(VariableKind::Free(name)))
+                    }
+                }
             }
         }
         Token::Lambda => {
@@ -64,17 +70,17 @@ pub fn parse_expr<I: Iterator<Item = Token>>(
                 Some(Token::Dot) => {}
                 token => panic!("Expected DOT, got: {:?}", token),
             }
-            lambda_ctx.push(variable_name.clone());
-            let body = parse_expr(ast, tokens, 0, lambda_ctx.clone());
-
             let lambda_node = ast.graph.add_node(Node::Lambda {
                 argument_name: Rc::new(variable_name),
             });
+            binder_ctx.push(lambda_node);
+            let body = parse_expr(ast, tokens, 0, binder_ctx.clone());
+
             ast.graph.add_edge(lambda_node, body, Edge::Body);
             lambda_node
         }
         Token::OpenParen => {
-            let result = parse_expr(ast, tokens, 0, lambda_ctx.clone());
+            let result = parse_expr(ast, tokens, 0, binder_ctx.clone());
             match tokens.next() {
                 Some(Token::CloseParen) => {}
                 token => panic!("Expected CloseParen, got: {:?}", token),
@@ -86,20 +92,20 @@ pub fn parse_expr<I: Iterator<Item = Token>>(
                 Some(Token::Symbol(name)) => name,
                 token => panic!("Expected variable name, got: {:?}", token),
             };
-            let value = parse_expr(ast, tokens, 0, lambda_ctx.clone());
+            let value = parse_expr(ast, tokens, 0, binder_ctx.clone());
             match tokens.next() {
                 Some(Token::In) => {}
                 token => panic!("Expected In, got: {:?}", token),
             };
-
-            lambda_ctx.push(variable_name.clone());
-            let body = parse_expr(ast, tokens, 0, lambda_ctx.clone());
-
             let closure_node = ast.graph.add_node(Node::Closure {
                 argument_name: Rc::new(variable_name),
             });
-            let body_edge = ast.graph.add_edge(closure_node, body, Edge::Body);
-            let parameter_edge = ast.graph.add_edge(closure_node, value, Edge::Parameter);
+
+            binder_ctx.push(closure_node);
+            let body = parse_expr(ast, tokens, 0, binder_ctx.clone());
+
+            ast.graph.add_edge(closure_node, body, Edge::Body);
+            ast.graph.add_edge(closure_node, value, Edge::Parameter);
 
             closure_node
         }
@@ -126,7 +132,7 @@ pub fn parse_expr<I: Iterator<Item = Token>>(
             _ => {}
         };
 
-        let rhs = parse_expr(ast, tokens, r_bp, lambda_ctx.clone());
+        let rhs = parse_expr(ast, tokens, r_bp, binder_ctx.clone());
         let app_node = ast.graph.add_node(Node::Application);
 
         match next_token {
