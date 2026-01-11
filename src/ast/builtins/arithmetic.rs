@@ -1,8 +1,6 @@
-use petgraph::{graph::NodeIndex, visit::EdgeRef};
+use petgraph::graph::NodeIndex;
 
-use crate::ast::{
-    builtins::ConstructorTag, ASTError, ASTResult, Edge, Node, Number, Primitive, AST,
-};
+use crate::ast::{ASTError, ASTResult, Edge, Node, Number, Primitive, AST};
 
 #[derive(Debug, Clone, Copy)]
 pub enum ArithmeticTag {
@@ -12,15 +10,6 @@ pub enum ArithmeticTag {
     Sub,
     Div,
     Eq,
-}
-
-impl Node {
-    fn extract_primitive_number(&self) -> Option<Number> {
-        match self {
-            Node::Primitive(Primitive::Number(number)) => Some(*number),
-            _ => None,
-        }
-    }
 }
 
 impl ArithmeticTag {

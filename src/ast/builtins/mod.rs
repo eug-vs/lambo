@@ -1,6 +1,6 @@
 use std::{fmt::Debug, rc::Rc};
 
-use petgraph::{graph::NodeIndex, stable_graph::EdgeReference, visit::EdgeRef};
+use petgraph::{graph::NodeIndex, stable_graph::EdgeReference};
 
 use crate::ast::{builtins::arithmetic::ArithmeticTag, ASTResult, Edge, Node, VariableKind, AST};
 

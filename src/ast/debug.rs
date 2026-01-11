@@ -1,4 +1,4 @@
-use crate::ast::{DebugNode, Edge, LambdaDepthTraverser, Node, VariableKind, AST};
+use crate::ast::{DebugNode, Edge, Node, Traverser, VariableKind, AST};
 
 impl AST {
     fn dot_node_with_attributes(
@@ -27,8 +27,8 @@ impl AST {
         debug_nodes.push(self.root);
 
         while let Some(root) = debug_nodes.pop() {
-            let mut traverser = LambdaDepthTraverser::new(root);
-            while let Some((node_id, _)) = traverser.next(&self.graph) {
+            let mut traverser = Traverser::new(root);
+            while let Some(node_id) = traverser.next(&self.graph) {
                 let id = node_id.index();
                 match self.graph.node_weight(node_id).unwrap() {
                     Node::Lambda { argument_name } => writeln!(
@@ -80,15 +80,11 @@ impl AST {
                         "{}",
                         Self::dot_node_with_attributes(
                             id,
-                            &format!(
-                                "{} ({})",
-                                self.get_variable_name(node_id).unwrap(),
-                                match kind {
-                                    VariableKind::Bound => "bound",
-                                    VariableKind::Free(_) => "free",
-                                }
-                            ),
-                            "gray",
+                            self.get_variable_name(node_id).unwrap(),
+                            match kind {
+                                VariableKind::Bound => "gray",
+                                VariableKind::Free(_) => "orange",
+                            },
                             "white"
                         )
                     )
@@ -107,15 +103,14 @@ impl AST {
         }
 
         for edge_id in self.graph.edge_indices() {
-            let (from, to) = self.graph.edge_endpoints(edge_id).unwrap();
-            let from = from.index();
-            let to = to.index();
-            writeln!(
-                result,
-                "{from} -> {to} [label=\"{:?}\"]",
-                self.graph.edge_weight(edge_id).unwrap()
-            )
-            .unwrap();
+            let edge = self.graph.edge_weight(edge_id).unwrap();
+            if let Edge::Binder = edge {
+            } else {
+                let (from, to) = self.graph.edge_endpoints(edge_id).unwrap();
+                let from = from.index();
+                let to = to.index();
+                writeln!(result, "{from} -> {to} [label=\"{:?}\"]", edge).unwrap();
+            }
         }
 
         writeln!(result, "}}").unwrap();

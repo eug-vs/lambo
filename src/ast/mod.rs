@@ -73,30 +73,24 @@ pub enum ASTError {
 
 type ASTResult<T> = Result<T, ASTError>;
 
-pub struct LambdaDepthTraverser {
-    stack: Vec<(NodeIndex, usize)>,
+pub struct Traverser {
+    stack: Vec<NodeIndex>,
 }
 
-impl LambdaDepthTraverser {
+impl Traverser {
     fn new(root: NodeIndex) -> Self {
-        Self {
-            stack: vec![(root, 0)],
-        }
+        Self { stack: vec![root] }
     }
-    fn next(&mut self, graph: &StableGraph<Node, Edge>) -> Option<(NodeIndex, usize)> {
-        let (id, depth) = self.stack.pop()?;
+    fn next(&mut self, graph: &StableGraph<Node, Edge>) -> Option<NodeIndex> {
+        let id = self.stack.pop()?;
 
         for edge in graph
             .edges_directed(id, Direction::Outgoing)
             .filter(|e| !matches!(e.weight(), Edge::Binder))
         {
-            let depth_increment = match edge.weight() {
-                Edge::Body => 1,
-                _ => 0,
-            };
-            self.stack.push((edge.target(), depth + depth_increment));
+            self.stack.push(edge.target());
         }
-        Some((id, depth))
+        Some(id)
     }
 }
 
@@ -293,7 +287,7 @@ impl AST {
     pub fn debug_ast_error(&self, error: ASTError) {
         println!("\n\n{:?}", error);
         let id = match error {
-            ASTError::EdgeNotFound(id, edge) => id,
+            ASTError::EdgeNotFound(id, _edge) => id,
             ASTError::ParentError(id) => id,
             ASTError::Custom(id, _) => id,
             _ => todo!(),
