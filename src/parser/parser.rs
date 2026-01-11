@@ -52,32 +52,45 @@ pub fn parse_expr<I: Iterator<Item = Token>>(
             }
         }
         Token::Lambda => {
-            let variable_name = match tokens.next() {
-                Some(Token::Symbol(name)) => name,
-                token => panic!("Expected variable name, got: {:?}", token),
-            };
-            match tokens.peek() {
-                Some(Token::Colon) => {
-                    tokens.next(); // Consume :
-                    match tokens.next() {
-                        Some(Token::Symbol(_type_name)) => {} // TODO: do something with type
-                        token => panic!("Expected type, got: {:?}", token),
-                    };
-                }
-                _ => {} // TODO: Default to any type
-            };
+            // Support nested syntax: \x y z.x y z
+            let mut lambdas_chain = vec![];
+            while let Some(Token::Symbol(_)) = tokens.peek() {
+                let Some(Token::Symbol(variable_name)) = tokens.next() else {
+                    unreachable!()
+                };
+
+                match tokens.peek() {
+                    Some(Token::Colon) => {
+                        tokens.next(); // Consume :
+                        match tokens.next() {
+                            Some(Token::Symbol(_type_name)) => {} // TODO: do something with type
+                            token => panic!("Expected type, got: {:?}", token),
+                        };
+                    }
+                    _ => {} // TODO: Default to any type
+                };
+                let lambda_node = ast.graph.add_node(Node::Lambda {
+                    argument_name: Rc::new(variable_name),
+                });
+                binder_ctx.push(lambda_node);
+                lambdas_chain.push(lambda_node);
+            }
             match tokens.next() {
                 Some(Token::Dot) => {}
                 token => panic!("Expected DOT, got: {:?}", token),
             }
-            let lambda_node = ast.graph.add_node(Node::Lambda {
-                argument_name: Rc::new(variable_name),
-            });
-            binder_ctx.push(lambda_node);
-            let body = parse_expr(ast, tokens, 0, binder_ctx.clone());
+            let head = *lambdas_chain
+                .first()
+                .expect("At least one lambda node must have been created!");
 
-            ast.graph.add_edge(lambda_node, body, Edge::Body);
-            lambda_node
+            let body = parse_expr(ast, tokens, 0, binder_ctx.clone());
+            lambdas_chain.push(body);
+
+            for window in lambdas_chain.windows(2) {
+                ast.graph.add_edge(window[0], window[1], Edge::Body);
+            }
+
+            head
         }
         Token::OpenParen => {
             let result = parse_expr(ast, tokens, 0, binder_ctx.clone());
