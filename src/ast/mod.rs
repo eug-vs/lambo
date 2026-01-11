@@ -360,6 +360,14 @@ impl AST {
 
         children_result
     }
+
+    fn binder_references(&self, binder_id: NodeIndex) -> impl Iterator<Item = NodeIndex> {
+        self.graph
+            .edges_directed(binder_id, Direction::Incoming)
+            .filter(|e| matches!(e.weight(), Edge::Binder))
+            .map(|e| e.source())
+    }
+
     /// Returns NodeIndex under the closure chain
     pub fn evaluate(&mut self, node_id: NodeIndex) -> Result<NodeIndex, ASTError> {
         self.add_debug_frame_with_annotation(node_id, "evaluate");
@@ -401,6 +409,10 @@ impl AST {
                 let under_closures =
                     self.evaluate(self.follow_edge(binding_closure_id, Edge::Parameter)?)?;
 
+                let should_clone = self
+                    .binder_references(binding_closure_id)
+                    .any(|var_id| var_id != node_id);
+
                 // Lift MFEs
                 if false {
                     let mut highest = under_closures;
@@ -427,10 +439,19 @@ impl AST {
 
                 self.lift_closure_chain(binding_closure_id, under_closures, Edge::Parameter)?;
 
-                let cloned_node_id = self.clone_subtree(
-                    self.follow_edge(binding_closure_id, Edge::Parameter)?,
-                    HashMap::new(),
-                );
+                let cloned_node_id = if should_clone {
+                    self.clone_subtree(
+                        self.follow_edge(binding_closure_id, Edge::Parameter)?,
+                        HashMap::new(),
+                    )
+                } else {
+                    let parameter = self.follow_edge(binding_closure_id, Edge::Parameter)?;
+                    self.add_debug_frame_with_annotation(binding_closure_id, "GC: Last usage");
+                    let body = self.follow_edge(binding_closure_id, Edge::Body)?;
+                    self.migrate_node(binding_closure_id, body);
+                    self.graph.remove_node(binding_closure_id);
+                    parameter
+                };
                 self.migrate_node(node_id, cloned_node_id);
                 self.graph.remove_node(node_id);
                 return Ok(cloned_node_id);
