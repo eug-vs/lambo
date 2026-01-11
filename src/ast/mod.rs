@@ -301,6 +301,65 @@ impl AST {
         self.debug_node(id);
     }
 
+    /// Returns (list of MFEs, list of variables)
+    #[tracing::instrument(skip(self))]
+    fn find_mfes(
+        &self,
+        node_id: NodeIndex,
+        blacklist: &HashSet<NodeIndex>,
+    ) -> (HashSet<NodeIndex>, HashSet<NodeIndex>) {
+        let current_node = self.graph.node_weight(node_id).unwrap();
+
+        let local_blacklist = match current_node {
+            Node::Variable(VariableKind::Bound) => {
+                return (
+                    [].into(),
+                    [node_id].into(), // Single variable
+                );
+            }
+            Node::Lambda { .. } | Node::Closure { .. } => {
+                let mut b = blacklist.clone();
+                for edge in self
+                    .graph
+                    .edges_directed(node_id, Direction::Incoming)
+                    .filter(|e| matches!(e.weight(), Edge::Binder))
+                {
+                    b.insert(edge.source());
+                }
+                Some(b)
+            }
+            _ => None,
+        };
+
+        let blacklist = match &local_blacklist {
+            Some(b) => b,
+            None => blacklist,
+        };
+
+        let children_result = self
+            .graph
+            .neighbors(node_id)
+            .map(|child| self.find_mfes(child, blacklist))
+            .reduce(|(a_mfes, a_vars), (b_mfes, b_vars)| {
+                (
+                    a_mfes.union(&b_mfes).copied().collect(),
+                    a_vars.union(&b_vars).copied().collect(),
+                )
+            })
+            .unwrap_or_default();
+
+        if let Node::Application = current_node {
+            if children_result
+                .1
+                .iter()
+                .all(|var| blacklist.get(var).is_none())
+            {
+                return ([node_id].into(), children_result.1);
+            }
+        }
+
+        children_result
+    }
     /// Returns NodeIndex under the closure chain
     pub fn evaluate(&mut self, node_id: NodeIndex) -> Result<NodeIndex, ASTError> {
         self.add_debug_frame_with_annotation(node_id, "evaluate");
@@ -341,6 +400,31 @@ impl AST {
                 let binding_closure_id = self.follow_edge(node_id, Edge::Binder)?;
                 let under_closures =
                     self.evaluate(self.follow_edge(binding_closure_id, Edge::Parameter)?)?;
+
+                // Lift MFEs
+                if false {
+                    let mut highest = under_closures;
+                    let (mfes, _) = self.find_mfes(under_closures, &mut HashSet::new());
+                    for mfe in mfes {
+                        self.add_debug_frame_with_annotation(mfe, "MFE");
+                        // Replace MFE with a variable
+                        let mfe_variable = self.graph.add_node(Node::Variable(VariableKind::Bound));
+                        self.migrate_node(mfe, mfe_variable);
+
+                        // Create new MFE closure
+                        let mfe_closure = self.graph.add_node(Node::Closure {
+                            argument_name: String::from("mfe").into(),
+                        });
+                        self.graph.add_edge(mfe_variable, mfe_closure, Edge::Binder);
+                        self.graph.add_edge(mfe_closure, mfe, Edge::Parameter);
+
+                        // Add this closure on top of current parameter chain
+                        self.migrate_node(highest, mfe_closure);
+                        self.graph.add_edge(mfe_closure, highest, Edge::Body);
+                        highest = mfe_closure;
+                    }
+                }
+
                 self.lift_closure_chain(binding_closure_id, under_closures, Edge::Parameter)?;
 
                 let cloned_node_id = self.clone_subtree(
