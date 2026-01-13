@@ -1,0 +1,86 @@
+let id λx.x in
+
+let Y λf.
+  (λx.f (x x))
+  (λx.f (x x))
+in
+
+let true λx y.x in
+let false λx y.y in
+let and \p q.q p false in
+
+let cons #constructor 2 in
+let nil  #constructor 0 in
+
+let some #constructor 1 in
+let none #constructor 0 in
+let option_unwrap 
+    EXHAUSTED
+    | #match none EMPTY_OPTION
+    | #match some id
+in
+
+let nth Y \nth n.
+  EXHAUSTED
+    | #match nil none
+    | #match cons (\head tail.(=num n 0) (some head) (tail | nth (- 1 n)))
+in
+
+let numbers_from Y λnumbers_from n.
+  cons n (n | + 1 | numbers_from)
+in
+
+let >= λthan what.
+  than | - what | =num 0
+in
+
+let mod λmodulus n.
+  n | (- (n | / modulus | * modulus))
+in
+
+let fold \combine zero.
+  (
+    Y \fold acc.
+      EXHAUSTED
+        | #match nil acc
+        | #match cons (\head tail.acc | combine head | combine (tail | fold zero))
+  ) zero
+in
+
+let map Y \map f.
+  EXHAUSTED
+    | #match nil nil
+    | #match cons (\head tail.cons (head | f) (tail | map f))
+in
+
+let find Y \find predicate.
+  EXHAUSTED
+    | #match nil none
+    | #match cons (\head tail.(predicate head) (some head) (tail | find predicate))
+in
+
+let primes
+  let build_primes Y λbuild_primes known_primes start_at.
+    let next
+      numbers_from 0
+      | map (λx.x | * 2 | + start_at)
+      | (find λn.
+        known_primes
+        | map (λprime.n | mod prime | >= 1)
+        | fold and true
+      )
+      | option_unwrap
+    in
+    cons next (build_primes (cons next known_primes) (+ 2 next))
+  in
+
+  cons 2 (build_primes (cons 2 nil) 3)
+in
+
+let bench_numbers \n.
+  numbers_from 0 | nth n | option_unwrap
+in
+
+let bench_primes \n.
+  primes | nth n | option_unwrap
+in
