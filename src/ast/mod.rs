@@ -6,6 +6,7 @@ use std::{
 
 pub mod builtins;
 mod debug;
+pub mod preprocess;
 
 use petgraph::{
     graph::{EdgeIndex, NodeIndex},
@@ -293,66 +294,6 @@ impl AST {
             _ => todo!(),
         };
         self.debug_node(id);
-    }
-
-    /// Returns (list of MFEs, list of variables)
-    #[tracing::instrument(skip(self))]
-    fn find_mfes(
-        &self,
-        node_id: NodeIndex,
-        blacklist: &HashSet<NodeIndex>,
-    ) -> (HashSet<NodeIndex>, HashSet<NodeIndex>) {
-        let current_node = self.graph.node_weight(node_id).unwrap();
-
-        let local_blacklist = match current_node {
-            Node::Variable(VariableKind::Bound) => {
-                return (
-                    [].into(),
-                    [node_id].into(), // Single variable
-                );
-            }
-            Node::Lambda { .. } | Node::Closure { .. } => {
-                let mut b = blacklist.clone();
-                for edge in self
-                    .graph
-                    .edges_directed(node_id, Direction::Incoming)
-                    .filter(|e| matches!(e.weight(), Edge::Binder))
-                {
-                    b.insert(edge.source());
-                }
-                Some(b)
-            }
-            _ => None,
-        };
-
-        let blacklist = match &local_blacklist {
-            Some(b) => b,
-            None => blacklist,
-        };
-
-        let children_result = self
-            .graph
-            .neighbors(node_id)
-            .map(|child| self.find_mfes(child, blacklist))
-            .reduce(|(a_mfes, a_vars), (b_mfes, b_vars)| {
-                (
-                    a_mfes.union(&b_mfes).copied().collect(),
-                    a_vars.union(&b_vars).copied().collect(),
-                )
-            })
-            .unwrap_or_default();
-
-        if let Node::Application = current_node {
-            if children_result
-                .1
-                .iter()
-                .all(|var| blacklist.get(var).is_none())
-            {
-                return ([node_id].into(), children_result.1);
-            }
-        }
-
-        children_result
     }
 
     fn binder_references(&self, binder_id: NodeIndex) -> impl Iterator<Item = NodeIndex> {

@@ -41,6 +41,7 @@ fn main() {
                 .join("\n");
 
             let mut ast = AST::from_str(&input);
+            ast.garbage_collect();
             println!(" $\n{}", ast);
             ast.add_debug_frame();
 
@@ -51,6 +52,7 @@ fn main() {
             if let Err(err) = ast.evaluate(ast.root) {
                 ast.debug_ast_error(err)
             };
+            ast.garbage_collect();
             ast.add_debug_frame();
             ast.dump_debug();
             println!(" >\n{}", ast);
