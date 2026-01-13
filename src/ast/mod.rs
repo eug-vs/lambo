@@ -303,73 +303,96 @@ impl AST {
                 let under_closures = self.evaluate(self.follow_edge(node_id, Edge::Function)?)?;
                 self.lift_closure_chain(node_id, under_closures, Edge::Function)?;
 
-                let function_target = self.follow_edge(node_id, Edge::Function)?;
-                let parameter_target = self.follow_edge(node_id, Edge::Parameter)?;
+                let function = self.follow_edge(node_id, Edge::Function)?;
+                let parameter = self.follow_edge(node_id, Edge::Parameter)?;
 
-                if let Node::Lambda { argument_name } =
-                    self.graph.node_weight(function_target).unwrap()
-                {
-                    let skip_through = |ast: &mut Self| {
-                        let body = ast.follow_edge(function_target, Edge::Body)?;
-                        ast.migrate_node(node_id, body);
-                        ast.graph.remove_node(node_id);
-                        ast.graph.remove_node(function_target);
-                        ast.remove_subtree(parameter_target);
-                        return ast.evaluate(body);
-                    };
+                match self.graph.node_weight(function).unwrap() {
+                    // Partial application for data tags
+                    &Node::Data { tag } => {
+                        let provided_count = self.graph.neighbors(function).count();
+                        if provided_count < tag.arity() {
+                            // Current node becomes a closure
+                            *self.graph.node_weight_mut(node_id).unwrap() = Node::Closure {
+                                argument_name: Rc::new(
+                                    tag.argument_names()[provided_count].to_string(),
+                                ),
+                            };
+                            let edge_id = self.get_edge_ref(node_id, Edge::Function)?.id();
+                            *self.graph.edge_weight_mut(edge_id).unwrap() = Edge::Body;
+                            // Add new binder!
+                            self.graph
+                                .add_edge(function, node_id, Edge::Binder(provided_count));
 
-                    if self.binder_references(function_target).next().is_none() {
-                        // Function has no binders, parameter will be ignored!
-                        self.add_debug_frame_with_annotation(
-                            function_target,
-                            "GC: Parameter is never used",
-                        );
-                        return skip_through(self);
+                            return if provided_count + 1 == tag.arity() {
+                                tag.evaluate(self, function)
+                            } else {
+                                Ok(function)
+                            };
+                        }
                     }
-                    if let Node::Variable(VariableKind::Bound) =
-                        self.graph.node_weight(parameter_target).unwrap()
-                    {
-                        // Paramater is not interesting - simply pointing to the other place.
-                        // No need to create closure here
-                        self.add_debug_frame_with_annotation(
-                            node_id,
-                            "GC: Redirecting application",
-                        );
-                        let true_binder = self.follow_edge(parameter_target, Edge::Binder(0))?;
+                    Node::Lambda { argument_name } => {
+                        let skip_through = |ast: &mut Self| {
+                            let body = ast.follow_edge(function, Edge::Body)?;
+                            ast.migrate_node(node_id, body);
+                            ast.graph.remove_node(node_id);
+                            ast.graph.remove_node(function);
+                            ast.remove_subtree(parameter);
+                            return ast.evaluate(body);
+                        };
 
-                        // Redirect all variables to a new binder
-                        for variable in self.binder_references(function_target).collect::<Vec<_>>()
+                        if self.binder_references(function).next().is_none() {
+                            // Function has no binders, parameter will be ignored!
+                            self.add_debug_frame_with_annotation(
+                                function,
+                                "GC: Parameter is never used",
+                            );
+                            return skip_through(self);
+                        }
+                        if let Node::Variable(VariableKind::Bound) =
+                            self.graph.node_weight(parameter).unwrap()
                         {
-                            let (edge_id, edge_weight) = self
-                                .graph
-                                .edges_connecting(variable, function_target)
-                                .next()
-                                .map(|e| (e.id(), *e.weight()))
-                                .unwrap();
-                            self.graph.remove_edge(edge_id);
-                            self.graph.add_edge(variable, true_binder, edge_weight);
+                            // Paramater is not interesting - simply pointing to the other place.
+                            // No need to create closure here
+                            self.add_debug_frame_with_annotation(
+                                node_id,
+                                "GC: Redirecting application",
+                            );
+                            let true_binder = self.follow_edge(parameter, Edge::Binder(0))?;
+
+                            // Redirect all variables to a new binder
+                            for variable in self.binder_references(function).collect::<Vec<_>>() {
+                                let (edge_id, edge_weight) = self
+                                    .graph
+                                    .edges_connecting(variable, function)
+                                    .next()
+                                    .map(|e| (e.id(), *e.weight()))
+                                    .unwrap();
+                                self.graph.remove_edge(edge_id);
+                                self.graph.add_edge(variable, true_binder, edge_weight);
+                            }
+
+                            return skip_through(self);
                         }
 
-                        return skip_through(self);
+                        let argument_name = argument_name.clone();
+
+                        // Lambda node becomes a closure
+                        self.migrate_node(node_id, function);
+                        *self.graph.node_weight_mut(function).unwrap() =
+                            Node::Closure { argument_name };
+                        let closure_id = function;
+
+                        // Add parameter edge to the closure
+                        let parameter_target = self.follow_edge(node_id, Edge::Parameter)?;
+                        self.graph
+                            .add_edge(closure_id, parameter_target, Edge::Parameter);
+
+                        // Cleanup application node
+                        self.graph.remove_node(node_id);
+
+                        return self.evaluate(closure_id);
                     }
-
-                    let argument_name = argument_name.clone();
-
-                    // Lambda node becomes a closure
-                    self.migrate_node(node_id, function_target);
-                    *self.graph.node_weight_mut(function_target).unwrap() =
-                        Node::Closure { argument_name };
-                    let closure_id = function_target;
-
-                    // Add parameter edge to the closure
-                    let parameter_target = self.follow_edge(node_id, Edge::Parameter)?;
-                    self.graph
-                        .add_edge(closure_id, parameter_target, Edge::Parameter);
-
-                    // Cleanup application node
-                    self.graph.remove_node(node_id);
-
-                    return self.evaluate(closure_id);
+                    _ => {}
                 }
             }
             Node::Variable(VariableKind::Bound) => {
@@ -387,7 +410,6 @@ impl AST {
                 self.graph.remove_node(node_id);
                 return Ok(cloned_node_id);
             }
-            Node::Data { tag } => return tag.evaluate(self, node_id),
             _ => {}
         }
 

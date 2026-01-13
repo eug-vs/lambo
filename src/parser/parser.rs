@@ -36,12 +36,12 @@ pub fn parse_expr<I: Iterator<Item = Token>>(
             }) {
                 Some(binder_id) => {
                     let node = ast.graph.add_node(Node::Variable(VariableKind::Bound));
-                    ast.graph.add_edge(node, *binder_id, Edge::Binder);
+                    ast.graph.add_edge(node, *binder_id, Edge::Binder(0));
                     node
                 }
                 None => {
                     if let Some(tag) = ConstructorTag::from_str(&name) {
-                        ast.add_constructor(tag)
+                        ast.graph.add_node(Node::Data { tag })
                     } else if let Ok(number) = name.parse::<usize>() {
                         ast.graph
                             .add_node(Node::Primitive(Primitive::Number(number)))
