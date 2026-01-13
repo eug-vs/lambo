@@ -1,4 +1,4 @@
-use crate::ast::{DebugNode, Edge, Node, Traverser, VariableKind, AST};
+use crate::ast::{DebugNode, Edge, Node, VariableKind, AST};
 
 impl AST {
     fn dot_node_with_attributes(
@@ -104,7 +104,11 @@ impl AST {
 
         for edge_id in self.graph.edge_indices() {
             let edge = self.graph.edge_weight(edge_id).unwrap();
-            if let Edge::Binder = edge {
+            if let Node::Variable(_) | Node::Data { .. } = self
+                .graph
+                .node_weight(self.graph.edge_endpoints(edge_id).unwrap().0)
+                .unwrap()
+            {
             } else {
                 let (from, to) = self.graph.edge_endpoints(edge_id).unwrap();
                 let from = from.index();

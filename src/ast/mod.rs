@@ -41,19 +41,28 @@ pub enum Edge {
     Body,
     Parameter,
     Function,
-    Binder,
+    /// For data nodes, points to the binder for Nth argument
+    /// For variables, N=0 since there's only one binder
+    Binder(usize),
     Debug,
-    ConstructorArgument(usize),
 }
 
 #[derive(Debug, Clone)]
 pub enum Node {
-    Lambda { argument_name: Rc<String> },
+    Lambda {
+        argument_name: Rc<String>,
+    },
     Application,
     Variable(VariableKind),
     Primitive(Primitive),
-    Closure { argument_name: Rc<String> },
-    Data { tag: ConstructorTag },
+    Closure {
+        argument_name: Rc<String>,
+    },
+    /// Data is basically multi-dimensional variable -
+    /// it just holds multiple (tagged) references to other expressions
+    Data {
+        tag: ConstructorTag,
+    },
     Debug(DebugNode),
 }
 
@@ -73,27 +82,6 @@ pub enum ASTError {
 }
 
 type ASTResult<T> = Result<T, ASTError>;
-
-pub struct Traverser {
-    stack: Vec<NodeIndex>,
-}
-
-impl Traverser {
-    fn new(root: NodeIndex) -> Self {
-        Self { stack: vec![root] }
-    }
-    fn next(&mut self, graph: &StableGraph<Node, Edge>) -> Option<NodeIndex> {
-        let id = self.stack.pop()?;
-
-        for edge in graph
-            .edges_directed(id, Direction::Outgoing)
-            .filter(|e| !matches!(e.weight(), Edge::Binder))
-        {
-            self.stack.push(edge.target());
-        }
-        Some(id)
-    }
-}
 
 impl AST {
     pub fn new() -> Self {
@@ -128,7 +116,7 @@ impl AST {
         for edge in self
             .graph
             .edges_directed(from, Direction::Incoming)
-            .filter(|e| !matches!(e.weight(), Edge::Binder))
+            .filter(|e| !matches!(e.weight(), Edge::Binder(_)))
             .map(|e| e.id())
             .collect::<Vec<_>>()
         {
@@ -143,7 +131,7 @@ impl AST {
         match self.graph.node_weight(id).unwrap() {
             Node::Variable(VariableKind::Free(name)) => Ok(name),
             Node::Variable(VariableKind::Bound) => {
-                let binder_id = self.follow_edge(id, Edge::Binder)?;
+                let binder_id = self.follow_edge(id, Edge::Binder(0))?;
                 if let Some(Node::Closure { argument_name } | Node::Lambda { argument_name }) =
                     self.graph.node_weight(binder_id)
                 {
@@ -155,26 +143,25 @@ impl AST {
             _ => Err(ASTError::Custom(id, "Not a variable")),
         }
     }
-    pub fn fmt_expr(&self, expr: NodeIndex, tab_index: usize) -> ASTResult<String> {
-        let indent = "  ".repeat(tab_index);
+    pub fn fmt_expr(&self, expr: NodeIndex) -> ASTResult<String> {
         match &self.graph[expr] {
             Node::Variable(_) => Ok(self.get_variable_name(expr)?.to_string()),
             Node::Lambda { argument_name } => Ok(format!(
                 "λ{}.{}",
                 argument_name,
-                self.fmt_expr(self.follow_edge(expr, Edge::Body)?, tab_index)?
+                self.fmt_expr(self.follow_edge(expr, Edge::Body)?)?
             )),
             Node::Application => Ok(format!(
                 "({} {})",
-                self.fmt_expr(self.follow_edge(expr, Edge::Function)?, tab_index)?,
-                self.fmt_expr(self.follow_edge(expr, Edge::Parameter)?, tab_index)?
+                self.fmt_expr(self.follow_edge(expr, Edge::Function)?)?,
+                self.fmt_expr(self.follow_edge(expr, Edge::Parameter)?)?
             )),
             Node::Primitive(Primitive::Number(number)) => Ok(format!("{}", number)),
             Node::Closure { argument_name, .. } => Ok(format!(
-                "{indent}let {} \n{indent}{} in\n{indent}{}",
+                "let {} \n{} in\n{}",
                 argument_name,
-                self.fmt_expr(self.follow_edge(expr, Edge::Parameter)?, tab_index + 1)?,
-                self.fmt_expr(self.follow_edge(expr, Edge::Body)?, tab_index)?,
+                self.fmt_expr(self.follow_edge(expr, Edge::Parameter)?)?,
+                self.fmt_expr(self.follow_edge(expr, Edge::Body)?)?,
             )),
             Node::Debug(_) => Ok(String::new()),
             Node::Data { tag } => {
@@ -183,7 +170,7 @@ impl AST {
                     .edges_directed(expr, Direction::Outgoing)
                     .collect::<Vec<_>>();
                 edges.sort_by_key(|e| match *e.weight() {
-                    Edge::ConstructorArgument(argument_index) => argument_index,
+                    Edge::Binder(argument_index) => argument_index,
                     _ => panic!(),
                 });
                 Ok(format!(
@@ -198,6 +185,7 @@ impl AST {
             }
         }
     }
+
     #[tracing::instrument(skip(self))]
     fn clone_subtree(
         &mut self,
@@ -220,7 +208,7 @@ impl AST {
 
         for (target, weight) in edges {
             let to = match weight {
-                Edge::Binder => *binder_remaps.get(&target).unwrap_or(&target),
+                Edge::Binder(_) => *binder_remaps.get(&target).unwrap_or(&target),
                 _ => self.clone_subtree(target, binder_remaps.clone()),
             };
             self.graph.add_edge(cloned_id, to, weight);
@@ -258,7 +246,7 @@ impl AST {
             // Current edge now points to whatever was under closure chain
             self.redirect_edge(edge_id, node_under_closures);
 
-            self.add_debug_frame();
+            self.add_debug_frame_with_annotation(node_under_closures, "Lift");
         }
 
         Ok(())
@@ -299,7 +287,7 @@ impl AST {
     fn binder_references(&self, binder_id: NodeIndex) -> impl Iterator<Item = NodeIndex> {
         self.graph
             .edges_directed(binder_id, Direction::Incoming)
-            .filter(|e| matches!(e.weight(), Edge::Binder))
+            .filter(|e| matches!(e.weight(), Edge::Binder(_)))
             .map(|e| e.source())
     }
 
@@ -347,14 +335,19 @@ impl AST {
                             node_id,
                             "GC: Redirecting application",
                         );
-                        let true_binder = self.follow_edge(parameter_target, Edge::Binder)?;
+                        let true_binder = self.follow_edge(parameter_target, Edge::Binder(0))?;
 
                         // Redirect all variables to a new binder
                         for variable in self.binder_references(function_target).collect::<Vec<_>>()
                         {
-                            let edge_id = self.get_edge_ref(variable, Edge::Binder)?.id();
+                            let (edge_id, edge_weight) = self
+                                .graph
+                                .edges_connecting(variable, function_target)
+                                .next()
+                                .map(|e| (e.id(), *e.weight()))
+                                .unwrap();
                             self.graph.remove_edge(edge_id);
-                            self.graph.add_edge(variable, true_binder, Edge::Binder);
+                            self.graph.add_edge(variable, true_binder, edge_weight);
                         }
 
                         return skip_through(self);
@@ -380,48 +373,15 @@ impl AST {
                 }
             }
             Node::Variable(VariableKind::Bound) => {
-                let binding_closure_id = self.follow_edge(node_id, Edge::Binder)?;
-                let under_closures =
-                    self.evaluate(self.follow_edge(binding_closure_id, Edge::Parameter)?)?;
+                let binding_closure_id = self.follow_edge(node_id, Edge::Binder(0))?;
 
-                let should_clone = self
-                    .binder_references(binding_closure_id)
-                    .any(|var_id| var_id != node_id);
+                let (parameter, is_dangling) =
+                    self.evaluate_closure_parameter(binding_closure_id)?;
 
-                // Lift MFEs
-                if false {
-                    let mut highest = under_closures;
-                    let (mfes, _) = self.find_mfes(under_closures, &mut HashSet::new());
-                    for mfe in mfes {
-                        self.add_debug_frame_with_annotation(mfe, "MFE");
-                        // Replace MFE with a variable
-                        let mfe_variable = self.graph.add_node(Node::Variable(VariableKind::Bound));
-                        self.migrate_node(mfe, mfe_variable);
-
-                        // Create new MFE closure
-                        let mfe_closure = self.graph.add_node(Node::Closure {
-                            argument_name: String::from("mfe").into(),
-                        });
-                        self.graph.add_edge(mfe_variable, mfe_closure, Edge::Binder);
-                        self.graph.add_edge(mfe_closure, mfe, Edge::Parameter);
-
-                        // Add this closure on top of current parameter chain
-                        self.migrate_node(highest, mfe_closure);
-                        self.graph.add_edge(mfe_closure, highest, Edge::Body);
-                        highest = mfe_closure;
-                    }
-                }
-
-                self.lift_closure_chain(binding_closure_id, under_closures, Edge::Parameter)?;
-
-                let cloned_node_id = if should_clone {
-                    self.clone_subtree(
-                        self.follow_edge(binding_closure_id, Edge::Parameter)?,
-                        HashMap::new(),
-                    )
+                let cloned_node_id = if is_dangling {
+                    parameter
                 } else {
-                    self.add_debug_frame_with_annotation(binding_closure_id, "GC: Last usage");
-                    self.remove_closure(binding_closure_id)
+                    self.clone_subtree(parameter, HashMap::new())
                 };
                 self.migrate_node(node_id, cloned_node_id);
                 self.graph.remove_node(node_id);
@@ -432,6 +392,32 @@ impl AST {
         }
 
         Ok(node_id)
+    }
+
+    /// Properly evaluates closure's parameter, handling:
+    ///  - lifting
+    ///  - garbage collecting if necessary
+    /// Returns (reference to a parameter, is_dangling)
+    fn evaluate_closure_parameter(
+        &mut self,
+        binding_closure_id: NodeIndex,
+    ) -> ASTResult<(NodeIndex, bool)> {
+        let under_closures =
+            self.evaluate(self.follow_edge(binding_closure_id, Edge::Parameter)?)?;
+
+        let has_other_referrers = self.binder_references(binding_closure_id).take(2).count() == 2;
+
+        self.lift_closure_chain(binding_closure_id, under_closures, Edge::Parameter)?;
+
+        Ok(if has_other_referrers {
+            (
+                self.follow_edge(binding_closure_id, Edge::Parameter)?,
+                false,
+            )
+        } else {
+            self.add_debug_frame_with_annotation(binding_closure_id, "GC: Last usage");
+            (self.remove_closure(binding_closure_id), true)
+        })
     }
 }
 
@@ -468,7 +454,7 @@ impl AST {
         let children = self
             .graph
             .edges_directed(node_id, Direction::Outgoing)
-            .filter(|e| !matches!(e.weight(), Edge::Binder))
+            .filter(|e| !matches!(e.weight(), Edge::Binder(_)))
             .map(|e| e.target())
             .collect::<Vec<_>>();
 
@@ -493,7 +479,7 @@ impl Display for AST {
         write!(
             f,
             "{}",
-            self.fmt_expr(self.root, 0).map_err(|_| std::fmt::Error)?
+            self.fmt_expr(self.root).map_err(|_| std::fmt::Error)?
         )
     }
 }
