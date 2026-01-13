@@ -66,9 +66,11 @@ pub enum Node {
     Debug(DebugNode),
 }
 
+#[derive(Clone)]
 pub struct AST {
     pub graph: StableGraph<Node, Edge>,
     pub root: NodeIndex,
+    next_uid: usize,
 
     debug_frames: Vec<String>,
 }
@@ -89,7 +91,13 @@ impl AST {
             root: NodeIndex::default(),
             graph: StableGraph::new(),
             debug_frames: Vec::new(),
+            next_uid: 0,
         }
+    }
+    fn next_uid(&mut self) -> usize {
+        let uid = self.next_uid;
+        self.next_uid += 1;
+        uid
     }
     fn get_edge_ref<'a>(
         &'a self,
@@ -165,6 +173,7 @@ impl AST {
             )),
             Node::Debug(_) => Ok(String::new()),
             Node::Data { tag } => {
+                let tag_string = String::try_from(*tag).unwrap().replace("*", " *");
                 let mut edges = self
                     .graph
                     .edges_directed(expr, Direction::Outgoing)
@@ -173,15 +182,22 @@ impl AST {
                     Edge::Binder(argument_index) => argument_index,
                     _ => panic!(),
                 });
-                Ok(format!(
-                    "({:?} {})",
-                    tag,
-                    edges
-                        .into_iter()
-                        .map(|e| self.fmt_expr(e.target(), tab_index))
-                        .collect::<Result<Vec<_>, _>>()?
-                        .join(" ")
-                ))
+                let assigned_params = edges
+                    .into_iter()
+                    .map(|e| match self.graph.node_weight(e.target()).unwrap() {
+                        Node::Closure { argument_name } | Node::Lambda { argument_name } => {
+                            argument_name.to_string()
+                        }
+                        other => panic!("Incorrect binder {:?}", other),
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ");
+
+                Ok(if assigned_params.len() > 0 {
+                    format!("({} {})", tag_string, assigned_params)
+                } else {
+                    format!("{}", tag_string)
+                })
             }
         }
     }

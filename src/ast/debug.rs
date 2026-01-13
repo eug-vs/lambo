@@ -18,86 +18,80 @@ impl AST {
 
         let mut result = String::from("digraph EXPR {\n");
 
-        let mut debug_nodes = self
-            .graph
-            .node_indices()
-            .filter(|&id| matches!(self.graph.node_weight(id).unwrap(), Node::Debug(_)))
-            .collect::<Vec<_>>();
-
-        debug_nodes.push(self.root);
-
-        while let Some(root) = debug_nodes.pop() {
-            let mut traverser = Traverser::new(root);
-            while let Some(node_id) = traverser.next(&self.graph) {
-                let id = node_id.index();
-                match self.graph.node_weight(node_id).unwrap() {
-                    Node::Lambda { argument_name } => writeln!(
+        for node_id in self.graph.node_indices() {
+            let id = node_id.index();
+            match self.graph.node_weight(node_id).unwrap() {
+                Node::Lambda { argument_name } => writeln!(
+                    result,
+                    "{}",
+                    Self::dot_node_with_attributes(
+                        id,
+                        &format!("λ{argument_name}"),
+                        "green",
+                        "white"
+                    )
+                )
+                .unwrap(),
+                Node::Closure { argument_name } => {
+                    writeln!(
                         result,
                         "{}",
                         Self::dot_node_with_attributes(
                             id,
-                            &format!("λ{argument_name}"),
-                            "green",
+                            &format!("let {argument_name} in"),
+                            "red",
                             "white"
                         )
                     )
-                    .unwrap(),
-                    Node::Closure { argument_name } => {
-                        writeln!(
-                            result,
-                            "{}",
-                            Self::dot_node_with_attributes(
-                                id,
-                                &format!("let {argument_name} in"),
-                                "red",
-                                "white"
-                            )
-                        )
-                        .unwrap();
-                        let parameter = self.follow_edge(node_id, Edge::Parameter).unwrap().index();
-                        let body = self.follow_edge(node_id, Edge::Body).unwrap().index();
-                        // Group function and parameter on same rank
-                        writeln!(result, "{{ rank = same; {body}; {parameter}; }}").unwrap();
-                        // Force horizontal order: function on the left, parameter on the right
-                        writeln!(result, "{body} -> {parameter} [style=invis]").unwrap();
-                    }
-                    Node::Application {} => {
-                        writeln!(
-                            result,
-                            "{}",
-                            Self::dot_node_with_attributes(id, &format!("call"), "blue", "white")
-                        )
-                        .unwrap();
-                        let parameter = self.follow_edge(node_id, Edge::Parameter).unwrap().index();
-                        let function = self.follow_edge(node_id, Edge::Function).unwrap().index();
-                        // Group function and parameter on same rank
-                        writeln!(result, "{{ rank = same; {function}; {parameter}; }}").unwrap();
-                        // Force horizontal order: function on the left, parameter on the right
-                        writeln!(result, "{function} -> {parameter} [style=invis]").unwrap();
-                    }
-                    Node::Variable(kind) => writeln!(
+                    .unwrap();
+                    let parameter = self.follow_edge(node_id, Edge::Parameter).unwrap().index();
+                    let body = self.follow_edge(node_id, Edge::Body).unwrap().index();
+                    // Group function and parameter on same rank
+                    writeln!(result, "{{ rank = same; {body}; {parameter}; }}").unwrap();
+                    // Force horizontal order: function on the left, parameter on the right
+                    writeln!(result, "{body} -> {parameter} [style=invis]").unwrap();
+                }
+                Node::Application {} => {
+                    writeln!(
                         result,
                         "{}",
-                        Self::dot_node_with_attributes(
-                            id,
-                            self.get_variable_name(node_id).unwrap(),
-                            match kind {
-                                VariableKind::Bound => "gray",
-                                VariableKind::Free(_) => "orange",
-                            },
-                            "white"
-                        )
+                        Self::dot_node_with_attributes(id, &format!("call"), "blue", "white")
                     )
-                    .unwrap(),
-                    Node::Data { tag } => {
-                        writeln!(result, "{id} [label=\"{id}: Data {:?}\"]", tag).unwrap();
-                    }
-                    Node::Primitive(value) => {
-                        writeln!(result, "{id} [label=\"{id}: {:?}\"]", value).unwrap()
-                    }
-                    Node::Debug(DebugNode::Annotation { text }) => {
-                        writeln!(result, "{id} [label=\"{id}: {text}\", color=\"red\"]",).unwrap()
-                    }
+                    .unwrap();
+                    let parameter = self.follow_edge(node_id, Edge::Parameter).unwrap().index();
+                    let function = self.follow_edge(node_id, Edge::Function).unwrap().index();
+                    // Group function and parameter on same rank
+                    writeln!(result, "{{ rank = same; {function}; {parameter}; }}").unwrap();
+                    // Force horizontal order: function on the left, parameter on the right
+                    writeln!(result, "{function} -> {parameter} [style=invis]").unwrap();
+                }
+                Node::Variable(kind) => writeln!(
+                    result,
+                    "{}",
+                    Self::dot_node_with_attributes(
+                        id,
+                        self.get_variable_name(node_id).unwrap(),
+                        match kind {
+                            VariableKind::Bound => "gray",
+                            VariableKind::Free(_) => "orange",
+                        },
+                        "white"
+                    )
+                )
+                .unwrap(),
+                Node::Data { tag } => {
+                    writeln!(
+                        result,
+                        "{id} [label=\"{id}: Data {}\"]",
+                        String::try_from(*tag).unwrap()
+                    )
+                    .unwrap();
+                }
+                Node::Primitive(value) => {
+                    writeln!(result, "{id} [label=\"{id}: {:?}\"]", value).unwrap()
+                }
+                Node::Debug(DebugNode::Annotation { text }) => {
+                    writeln!(result, "{id} [label=\"{id}: {text}\", color=\"red\"]",).unwrap()
                 }
             }
         }

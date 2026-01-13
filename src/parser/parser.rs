@@ -40,7 +40,7 @@ pub fn parse_expr<I: Iterator<Item = Token>>(
                     node
                 }
                 None => {
-                    if let Some(tag) = ConstructorTag::from_str(&name) {
+                    if let Ok(tag) = ConstructorTag::try_from(name.as_str()) {
                         ast.graph.add_node(Node::Data { tag })
                     } else if let Ok(number) = name.parse::<usize>() {
                         ast.graph
