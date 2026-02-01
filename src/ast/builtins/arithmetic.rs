@@ -18,6 +18,7 @@ impl Primitive {
     pub fn extract_number(&self) -> ASTResult<Number> {
         match self {
             Primitive::Number(number) => ASTResult::Ok(*number),
+            _ => Err(ASTError::Custom(NodeIndex::default(), "NaN")),
         }
     }
 }

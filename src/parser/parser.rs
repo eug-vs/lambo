@@ -122,6 +122,9 @@ pub fn parse_expr<I: Iterator<Item = Token>>(
 
             closure_node
         }
+        Token::Quoted(quoted) => ast
+            .graph
+            .add_node(Node::Primitive(Primitive::Bytes(quoted.into()))),
         token => panic!("Invalid syntax: unexpected token {:?}", token),
     };
     loop {

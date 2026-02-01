@@ -29,6 +29,7 @@ pub type Number = usize;
 #[derive(Debug, Clone)]
 pub enum Primitive {
     Number(Number),
+    Bytes(Vec<u8>),
 }
 
 #[derive(Debug, Clone)]
@@ -81,6 +82,7 @@ pub enum ASTError {
     ParentError(NodeIndex),
     InvalidClosureChain,
     Custom(NodeIndex, &'static str),
+    TypeError(NodeIndex, &'static str),
 }
 
 type ASTResult<T> = Result<T, ASTError>;
@@ -165,6 +167,11 @@ impl AST {
                 self.fmt_expr(self.follow_edge(expr, Edge::Parameter)?)?
             )),
             Node::Primitive(Primitive::Number(number)) => Ok(format!("{}", number)),
+            Node::Primitive(Primitive::Bytes(bytes)) => Ok(format!(
+                "{:?}",
+                str::from_utf8(bytes)
+                    .map_err(|_| ASTError::Custom(expr, "Bytes is not a valid ut8 string"))?
+            )),
             Node::Closure { argument_name, .. } => Ok(format!(
                 "let {} \n{} in\n{}",
                 argument_name,
@@ -454,7 +461,7 @@ impl AST {
             )
         } else {
             self.add_debug_frame_with_annotation(binding_closure_id, "GC: Last usage");
-            (self.remove_closure(binding_closure_id), true)
+            (self.remove_closure(binding_closure_id)?, true)
         })
     }
 }
@@ -503,12 +510,12 @@ impl AST {
     }
 
     /// Returns dangling parameter
-    fn remove_closure(&mut self, closure_id: NodeIndex) -> NodeIndex {
-        let body = self.follow_edge(closure_id, Edge::Body).unwrap();
-        let parameter = self.follow_edge(closure_id, Edge::Parameter).unwrap();
+    fn remove_closure(&mut self, closure_id: NodeIndex) -> ASTResult<NodeIndex> {
+        let body = self.follow_edge(closure_id, Edge::Body)?;
+        let parameter = self.follow_edge(closure_id, Edge::Parameter)?;
         self.migrate_node(closure_id, body);
         self.graph.remove_node(closure_id);
-        parameter
+        Ok(parameter)
     }
 }
 

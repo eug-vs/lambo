@@ -1,4 +1,4 @@
-use crate::ast::{DebugNode, Edge, Node, VariableKind, AST};
+use crate::ast::{DebugNode, Edge, Node, Primitive, VariableKind, AST};
 
 impl AST {
     fn dot_node_with_attributes(
@@ -87,6 +87,12 @@ impl AST {
                     )
                     .unwrap();
                 }
+                Node::Primitive(Primitive::Bytes(bytes)) => writeln!(
+                    result,
+                    "{id} [label=\"Bytes: {}\"]",
+                    str::from_utf8(bytes).unwrap()
+                )
+                .unwrap(),
                 Node::Primitive(value) => {
                     writeln!(result, "{id} [label=\"{id}: {:?}\"]", value).unwrap()
                 }

@@ -1,4 +1,4 @@
-use crate::ast::AST;
+use crate::ast::{builtins::ConstructorTag, Node, AST};
 use std::{
     io::{stdin, Read},
     thread,
@@ -33,13 +33,6 @@ fn main() {
             let mut input = String::new();
             stdin().read_to_string(&mut input).unwrap();
 
-            // Strip comments
-            input = input
-                .lines()
-                .map(|line| line.split("//").next().unwrap())
-                .collect::<Vec<_>>()
-                .join("\n");
-
             let mut ast = AST::from_str(&input);
             ast.garbage_collect();
             println!(" $\n{}", ast);
@@ -53,6 +46,17 @@ fn main() {
                 ast.debug_ast_error(err)
             };
             ast.garbage_collect();
+
+            match ast.graph.node_weight(ast.root).unwrap() {
+                &Node::Data {
+                    tag: ConstructorTag::IO(io),
+                } => {
+                    let root = ast.root;
+                    io.run(&mut ast, root).unwrap();
+                }
+                _ => {}
+            }
+
             ast.add_debug_frame();
             ast.dump_debug();
             println!(" >\n{}", ast);

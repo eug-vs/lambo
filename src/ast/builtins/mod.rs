@@ -3,19 +3,23 @@ use std::fmt::Debug;
 use petgraph::{graph::NodeIndex, visit::EdgeRef};
 
 use crate::ast::{
-    builtins::{arithmetic::ArithmeticTag, helpers::HelperFunctionTag},
+    builtins::{
+        arithmetic::ArithmeticTag, bytes::BytesOpTag, helpers::HelperFunctionTag, io::IOTag,
+    },
     ASTError, ASTResult, Edge, Node, Primitive, AST,
 };
 
 pub mod arithmetic;
+pub mod bytes;
 pub mod helpers;
-// pub mod io;
+pub mod io;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ConstructorTag {
-    // IO(IOTag),
+    IO(IOTag),
     Arithmetic(ArithmeticTag),
     HelperFunction(HelperFunctionTag),
+    BytesOp(BytesOpTag),
     CustomTag { uid: usize, arity: usize },
 }
 
@@ -34,6 +38,13 @@ const TAGS: &[(&str, ConstructorTag)] = &[
     ("*", ConstructorTag::Arithmetic(ArithmeticTag::Mul)),
     ("/", ConstructorTag::Arithmetic(ArithmeticTag::Div)),
     ("^", ConstructorTag::Arithmetic(ArithmeticTag::Pow)),
+    ("#bytes_new", ConstructorTag::BytesOp(BytesOpTag::New)),
+    ("#bytes_get", ConstructorTag::BytesOp(BytesOpTag::Get)),
+    ("#bytes_push", ConstructorTag::BytesOp(BytesOpTag::Push)),
+    ("#bytes_len", ConstructorTag::BytesOp(BytesOpTag::Length)),
+    ("#io_print", ConstructorTag::IO(IOTag::Print)),
+    ("#io_readline", ConstructorTag::IO(IOTag::ReadLine)),
+    ("#io_flatmap", ConstructorTag::IO(IOTag::Flatmap)),
 ];
 
 impl TryFrom<&str> for ConstructorTag {
@@ -63,9 +74,10 @@ impl Into<String> for ConstructorTag {
 impl ConstructorTag {
     pub fn argument_names(&self) -> Vec<&str> {
         match self {
-            // Self::IO(tag) => tag.argument_names(),
+            Self::IO(tag) => tag.argument_names(),
             Self::Arithmetic(tag) => tag.argument_names(),
             Self::HelperFunction(tag) => tag.argument_names(),
+            Self::BytesOp(tag) => tag.argument_names(),
             Self::CustomTag { arity, .. } => {
                 vec!["param"; *arity]
             }
@@ -94,9 +106,9 @@ impl ConstructorTag {
         match self {
             Self::Arithmetic(tag) => tag.evaluate(ast, id),
             Self::HelperFunction(tag) => tag.evaluate(ast, id),
-            Self::CustomTag { .. } => Ok(id)
-            // Self::IO(IOTag::Flatmap) => IOTag::flatmap(ast, arguments),
-            // Self::CustomTag { .. } | Self::IO { .. } => Ok(()),
+            Self::BytesOp(tag) => tag.evaluate(ast, id),
+            Self::IO(IOTag::Flatmap) => IOTag::flatmap(ast, id),
+            _ => Ok(id),
         }
     }
 }

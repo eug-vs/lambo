@@ -23,7 +23,7 @@ impl AST {
                 break;
             }
             for closure_id in unsued_closures {
-                let parameter = self.remove_closure(closure_id);
+                let parameter = self.remove_closure(closure_id).unwrap();
                 self.remove_subtree(parameter);
             }
         }
