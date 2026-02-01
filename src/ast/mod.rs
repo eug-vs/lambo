@@ -72,6 +72,7 @@ pub struct AST {
     pub graph: StableGraph<Node, Edge>,
     pub root: NodeIndex,
     next_uid: usize,
+    until_gc: usize,
 
     debug_frames: Vec<String>,
 }
@@ -87,12 +88,15 @@ pub enum ASTError {
 
 type ASTResult<T> = Result<T, ASTError>;
 
+const GC_INTERVAL: usize = 10_000;
+
 impl AST {
     pub fn new() -> Self {
         Self {
             root: NodeIndex::default(),
             graph: StableGraph::new(),
             debug_frames: Vec::new(),
+            until_gc: GC_INTERVAL,
             next_uid: 0,
         }
     }
@@ -100,6 +104,23 @@ impl AST {
         let uid = self.next_uid;
         self.next_uid += 1;
         uid
+    }
+    fn maybe_gc(&mut self) {
+        if self.until_gc == 0 {
+            let (node_capacity, edge_capacity) = self.graph.capacity();
+            let nodes = self.graph.node_indices().count();
+            let edges = self.graph.edge_indices().count();
+
+            let node_ratio = nodes as f32 / node_capacity as f32;
+            let edge_ratio = edges as f32 / edge_capacity as f32;
+
+            if f32::max(node_ratio, edge_ratio) > 0.75 {
+                self.garbage_collect();
+            }
+
+            self.until_gc = GC_INTERVAL;
+        }
+        self.until_gc -= 1;
     }
     fn get_edge_ref<'a>(
         &'a self,
@@ -316,6 +337,7 @@ impl AST {
 
     /// Returns NodeIndex under the closure chain
     pub fn evaluate(&mut self, node_id: NodeIndex) -> Result<NodeIndex, ASTError> {
+        self.maybe_gc();
         self.add_debug_frame_with_annotation(node_id, "evaluate");
         match *self.graph.node_weight(node_id).unwrap() {
             Node::Closure { .. } => {
