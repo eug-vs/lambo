@@ -356,17 +356,36 @@ impl AST {
                     &Node::Data { tag } => {
                         let provided_count = self.graph.neighbors(function).count();
                         if provided_count < tag.arity() {
-                            // Current node becomes a closure
-                            *self.graph.node_weight_mut(node_id).unwrap() = Node::Closure {
-                                argument_name: Rc::new(
-                                    tag.argument_names()[provided_count].to_string(),
-                                ),
+                            let binding_closure = if let Node::Variable(VariableKind::Bound) =
+                                self.graph.node_weight(parameter).unwrap()
+                            {
+                                self.add_debug_frame_with_annotation(
+                                    node_id,
+                                    "GC: Redirecting application",
+                                );
+                                let true_binder = self.follow_edge(parameter, Edge::Binder(0))?;
+                                self.migrate_node(node_id, function);
+                                self.graph.remove_node(node_id);
+                                self.graph.remove_node(parameter);
+                                true_binder
+                            } else {
+                                // Current node becomes a closure
+                                *self.graph.node_weight_mut(node_id).unwrap() = Node::Closure {
+                                    argument_name: Rc::new(
+                                        tag.argument_names()[provided_count].to_string(),
+                                    ),
+                                };
+                                let edge_id = self.get_edge_ref(node_id, Edge::Function)?.id();
+                                *self.graph.edge_weight_mut(edge_id).unwrap() = Edge::Body;
+                                node_id
                             };
-                            let edge_id = self.get_edge_ref(node_id, Edge::Function)?.id();
-                            *self.graph.edge_weight_mut(edge_id).unwrap() = Edge::Body;
+
                             // Add new binder!
-                            self.graph
-                                .add_edge(function, node_id, Edge::Binder(provided_count));
+                            self.graph.add_edge(
+                                function,
+                                binding_closure,
+                                Edge::Binder(provided_count),
+                            );
 
                             return if provided_count + 1 == tag.arity() {
                                 tag.evaluate(self, function)
