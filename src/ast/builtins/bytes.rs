@@ -29,8 +29,7 @@ impl BytesOpTag {
             Self::New => {
                 let size = ast
                     .extract_primitive_from_environment(binders[0])
-                    .map(|p| p.extract_number())
-                    .flatten()?;
+                    .and_then(|p| p.extract_number())?;
 
                 let bytes = vec![0; size];
                 let node = ast.graph.add_node(Node::Primitive(Primitive::Bytes(bytes)));
@@ -47,8 +46,7 @@ impl BytesOpTag {
 
                 let index = ast
                     .extract_primitive_from_environment(index_binder)
-                    .map(|p| p.extract_number())
-                    .flatten()?;
+                    .and_then(|p| p.extract_number())?;
 
                 let (byte_array_id, is_dangling) =
                     ast.evaluate_closure_parameter(byte_array_binder)?;
@@ -99,8 +97,7 @@ impl BytesOpTag {
 
                 let value = ast
                     .extract_primitive_from_environment(value_binder)
-                    .map(|p| p.extract_number())
-                    .flatten()?;
+                    .and_then(|p| p.extract_number())?;
 
                 let mut bytes = match ast.extract_primitive_from_environment(byte_array_binder)? {
                     Primitive::Bytes(bytes) => bytes,

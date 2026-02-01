@@ -1,6 +1,6 @@
-use crate::ast::{builtins::ConstructorTag, Node, AST};
+use lambo::ast::{AST, Node, builtins::ConstructorTag};
 use std::{
-    io::{stdin, Read},
+    io::{Read, stdin},
     thread,
 };
 use tracing_flame::FlameLayer;
@@ -19,9 +19,6 @@ fn setup_global_subscriber() -> impl Drop {
 
     _guard
 }
-
-pub mod ast;
-pub mod parser;
 
 const ENABLE_TRACING: bool = false;
 
@@ -47,14 +44,12 @@ fn main() {
             };
             ast.garbage_collect();
 
-            match ast.graph.node_weight(ast.root).unwrap() {
-                &Node::Data {
-                    tag: ConstructorTag::IO(io),
-                } => {
-                    let root = ast.root;
-                    io.run(&mut ast, root).unwrap();
-                }
-                _ => {}
+            if let &Node::Data {
+                tag: ConstructorTag::IO(io),
+            } = ast.graph.node_weight(ast.root).unwrap()
+            {
+                let root = ast.root;
+                io.run(&mut ast, root).unwrap();
             }
 
             ast.add_debug_frame();

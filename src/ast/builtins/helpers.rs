@@ -1,4 +1,4 @@
-use crate::ast::{builtins::ConstructorTag, ASTError, ASTResult, Edge, Node, VariableKind, AST};
+use crate::ast::{AST, ASTError, ASTResult, Edge, Node, VariableKind, builtins::ConstructorTag};
 use petgraph::graph::NodeIndex;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -25,8 +25,7 @@ impl HelperFunctionTag {
                 })?;
                 let arity = ast
                     .extract_primitive_from_environment(arity_binder)
-                    .map(|p| p.extract_number())
-                    .flatten()?;
+                    .and_then(|p| p.extract_number())?;
 
                 let tag = ConstructorTag::CustomTag {
                     uid: ast.next_uid(),
@@ -45,7 +44,7 @@ impl HelperFunctionTag {
                     .map_err(|_| ASTError::Custom(id, "Incorrect argument count for Match"))?;
 
                 // We are strict only in constructor and value
-                let (constructor, is_constructor_dangling) =
+                let (constructor, _is_constructor_dangling) =
                     ast.evaluate_closure_parameter(constructor)?;
                 let (value, is_value_dangling) = ast.evaluate_closure_parameter(value_binder)?;
 

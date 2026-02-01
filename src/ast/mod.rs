@@ -90,6 +90,12 @@ type ASTResult<T> = Result<T, ASTError>;
 
 const GC_INTERVAL: usize = 10_000;
 
+impl Default for AST {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AST {
     pub fn new() -> Self {
         Self {
@@ -221,10 +227,10 @@ impl AST {
                     .collect::<Vec<_>>()
                     .join(" ");
 
-                Ok(if assigned_params.len() > 0 {
+                Ok(if !assigned_params.is_empty() {
                     format!("({} {})", tag_string, assigned_params)
                 } else {
-                    format!("{}", tag_string)
+                    tag_string.to_string()
                 })
             }
         }
@@ -401,7 +407,7 @@ impl AST {
                             ast.graph.remove_node(node_id);
                             ast.graph.remove_node(function);
                             ast.remove_subtree(parameter);
-                            return ast.evaluate(body);
+                            ast.evaluate(body)
                         };
 
                         if self.binder_references(function).next().is_none() {

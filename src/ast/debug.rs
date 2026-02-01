@@ -51,11 +51,11 @@ impl AST {
                     // Force horizontal order: function on the left, parameter on the right
                     writeln!(result, "{body} -> {parameter} [style=invis]").unwrap();
                 }
-                Node::Application {} => {
+                Node::Application => {
                     writeln!(
                         result,
                         "{}",
-                        Self::dot_node_with_attributes(id, &format!("call"), "blue", "white")
+                        Self::dot_node_with_attributes(id, &"call".to_string(), "blue", "white")
                     )
                     .unwrap();
                     let parameter = self.follow_edge(node_id, Edge::Parameter).unwrap().index();

@@ -3,10 +3,10 @@ use std::fmt::Debug;
 use petgraph::{graph::NodeIndex, visit::EdgeRef};
 
 use crate::ast::{
+    AST, ASTError, ASTResult, Edge, Node, Primitive,
     builtins::{
         arithmetic::ArithmeticTag, bytes::BytesOpTag, helpers::HelperFunctionTag, io::IOTag,
     },
-    ASTError, ASTResult, Edge, Node, Primitive, AST,
 };
 
 pub mod arithmetic;
@@ -58,13 +58,13 @@ impl TryFrom<&str> for ConstructorTag {
     }
 }
 
-impl Into<String> for ConstructorTag {
-    fn into(self) -> String {
-        match self {
+impl From<ConstructorTag> for String {
+    fn from(tag: ConstructorTag) -> Self {
+        match tag {
             ConstructorTag::CustomTag { uid, .. } => format!("CustomTag{uid}"),
             _ => TAGS
                 .iter()
-                .find(|(_, t)| *t == self)
+                .find(|(_, t)| *t == tag)
                 .map(|(k, _)| k.to_string())
                 .unwrap(),
         }

@@ -33,7 +33,7 @@ pub fn lexer(input: &str) -> impl Iterator<Item = Token> {
 
     from_fn(move || {
         // Skip whitespace
-        while let Some(_) = chars.next_if(|c| c.is_ascii_whitespace()) {}
+        while chars.next_if(|c| c.is_ascii_whitespace()).is_some() {}
 
         let c = chars.peek()?;
 

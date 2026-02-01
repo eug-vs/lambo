@@ -1,8 +1,6 @@
-use std::collections::HashSet;
 
-use petgraph::{graph::NodeIndex, visit::EdgeRef, Direction};
 
-use crate::ast::{ASTResult, Edge, Node, VariableKind, AST};
+use crate::ast::{Node, AST};
 
 impl AST {
     #[tracing::instrument(skip(self))]
@@ -19,7 +17,7 @@ impl AST {
                 })
                 .collect::<Vec<_>>();
 
-            if unsued_closures.len() == 0 {
+            if unsued_closures.is_empty() {
                 break;
             }
             for closure_id in unsued_closures {

@@ -1,7 +1,7 @@
 use petgraph::graph::NodeIndex;
 
 use crate::ast::{
-    builtins::ConstructorTag, ASTError, ASTResult, Edge, Node, Number, Primitive, AST,
+    builtins::ConstructorTag, ASTError, ASTResult, Node, Number, Primitive, AST,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -34,8 +34,7 @@ impl ArithmeticTag {
             .iter()
             .map(|&binder| {
                 ast.extract_primitive_from_environment(binder)
-                    .map(|p| p.extract_number())
-                    .flatten()
+                    .and_then(|p| p.extract_number())
             })
             .collect::<ASTResult<Vec<_>>>()?
             .try_into()

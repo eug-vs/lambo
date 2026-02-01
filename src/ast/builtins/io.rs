@@ -43,7 +43,7 @@ impl IOTag {
 
                 print!(
                     "{}",
-                    str::from_utf8(&value)
+                    str::from_utf8(value)
                         .map_err(|_| ASTError::Custom(bytes, "Bytes is not a valid utf8 string"))?
                 );
                 if is_bytes_dangling {
@@ -57,7 +57,7 @@ impl IOTag {
                     )))))
             }
             IOTag::Flatmap => {
-                return Err(ASTError::Custom(id, "#io_flatmap is not an effectful IO"))
+                Err(ASTError::Custom(id, "#io_flatmap is not an effectful IO"))
             }
         }
     }
