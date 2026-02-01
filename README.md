@@ -1,250 +1,155 @@
-# Lambo - Lambda Calculus Compiler
-> All code-blocks from this README file are actually used as an input to the main program
+# Lambo
+Lambo is a Lambda Calculus based language with minimal sugar on top.
 
-## Basics
-The language is designed to be very minimal, with minimal changes on top of OG lambda calculus.
+Main features:
+ - Lazy evaluation (Call-by-Need)
+ - ADT (Algebraic Data Types)
+ - IO (Haskell-like)
+ - Native arithmetic (`u64`)
 
-Expression on each line is automatically evaluated and run.
+This repo contains Rust interpreter for Lambo.
 
-Each Lambo expression goes through 2 phases: Evaluation and Runtime.
- - Evaluation: expression is evaluated (reduced) without producing any side-effects. Deterministic; all functions are **pure** at evaluation phase.
- - Runtime: runs evaluated expression **with** side-effects (IO). It is **impure** and **non-deterministic**, because the output entirely depends on the external factors (e.g what you put into console at runtime). More on Runtime later in this README.
+Right now Lambo can already be used to:
+ - solve Advent of Code problems in a reasonable time (~2s for the first problem of 2025)
+ - create lambda-calculus interpreter within itself
+ - fuck around and have fun!
 
-The output is structured like this:
-`$   <EXPRESSION>`
+## Examples
+Examples can be found in [benchmarks.lambo](./benches/benchmarks.lambo)
 
-`=>  <EVALUATION_RESULT>`
-
-`==> <RUNTIME_RESULT>`
+## NeoVim "integration"
+This repo provides an additional [nvim.lua](./.nvim.lua) file with syntax highlight (OCaml-based) and `:LamboRun` comamnd for faster debugging. To load this config automatically:
+```lua
+vim.opt.exrc = true
+vim.opt.secure = true
+```
 
 ## Evaluation order
 Many (imperative) programming languages use Strict (Applicative) evaluation order: when function call happens, arguments are evaluated before getting passed to a function. E.g in JavaScript, `f(x)` will first evaluate `x`, and only then pass the result to `f` as an argument.
 
-Lambo uses Call-by-Name evaluation order. It is a variant of Normal (Non-Strict) evaluation order, where even function body is not reduced until it's called. This is also known as Lazy evaluation. In short, if the value is not directly used, it won't be evaluated. Lazy evaluation order is needed to be able to represent infinite structures and recursion, like Y combinator.
+Lambo uses Call-by-Need evaluation order (aka Lazy evaluation). It is a variant of Normal (Non-Strict) evaluation order, where even function body is not reduced until it's called. In short, if the value is not directly used, it won't be evaluated. Lazy evaluation order is needed to be able to represent infinite structures (e.g infinite list of prime numbers) and recursion in general (Y combinator, loops).
 
-## Variable declaration
-This is only a syntax sugar. Lambda Calculus does not have named variables, but you can
-emulate them via argument names. Writing `let <name> <expr>` simply wraps 
-every evaluation below it into a closure providing `<expr>` as a named argument.
+## Syntax sugar
+### Functions of N arguments
+In lambda calculus all functions take 1 argument. If you want more arguments, use currying (`\a.\b.\c.a b c`).
+Special syntax `\a b c.a b c` is just a shorthand to represent currying.
 
-Every expression below will be transformed into `(λ<variable_name>.<original>) <variable_expr>`.
+### Variable declaration
+Lambda Calculus does not have named variables, but you can
+emulate them via argument names. Writing `let <name> <value> in <expr>` simply wraps 
+every evaluation below it into a closure providing `<value>` as a named argument.
 
-```js
-// Identity function
-let id λx.x
+Every expression below will be transformed into `(λ<name>.<expr>) <value>` (although current imlementation has a handy `Closure` node for it)
+
+```ocaml
+(** Identity function **)
+let id λx.x in
+id 10
 ```
 
-### Assert
-Let's build our first useful function: `assert_eq`. It will take two input
-values and throw an error if they are not beta-equivalent. `#io_throw` here is a special beast that we will touch in later sections.
-
-```js
-let assert λx.x PASS (#io_throw FAIL)
-
-assert λx.λy.x
-// => PASS
+### Pipe operator
+`a | b` is the same as `(b a)`. Very useful to create functional pilelines.
+```ocaml
+9 | sqrt | + 5 | / 2 | - 1
 ```
 
-## Church encoding
-Below follows an example of implementating Church encoding in Lambo.
+## Conventions
+### Point-free style
+In built-in functions point-free style is preferred, meaning the "value" argument is always LAST.
 
-### Boolean logic
-```js
-let true λx.λy.x
-let false λx.λy.y
-
-let not λbool.bool false true
-let =bool λa.λb.a b (not b)
-
-assert (=bool (not false) true)
-
-let and λp.λq.((p q) p)
-assert (=bool (and false UNKNOWN) false)
+This is especially useful in combination with pipes. Consider `/ divisor dividend` and `/ dividend divisor`. The first option is superior because it combines with pipes nicely:
+```ocaml
+10 | / 5 | - 1
 ```
 
-### Pairs
-Pair acts like a container holding two values.
-```js
-let pair λx.λy.λf.f x y
-let pair_first λp.p true
-let pair_second λp.p false
+### Booleans
+We use Church booleans because they are lazy and cool.
+```ocaml
+let true  \x y.x in
+let false \x y.y in
+....
 ```
 
-### Arithmetic
-N-th Church number is a function that is essentially "Repeat N times".
-```js
-// Fun fact: this is actually equivalent to "false"
-let 0 λf.λx.x
 
-assert (not 0)
+## Extensions beyond lambda calculus
+### Numbers
+Church numbers are slow. In order to create a useful program you need fast arithmetic. Arithmetic is handlded by the host language (Rust).
 
-let =0 \n.n (\x.false) true
+Since the main goal is to have fast counters, we don't need signed numbers or
+floats - all Numbers are unsigned integers. If you want signed numbers, floats,
+rational, or whatnot - DIY!
 
-assert (=0 0)
+### Algebraic Data Types
+`#constructor` is a special function that takes `arity` (Number) and gives you an actual data constructor with that arity.
 
-let succ λn.λf.λx.(f ((n f) x))
-let 1 (succ 0)
-let 2 (succ 1)
-
-
-// Shift-and-increment function: (m, n) -> (n, n + 1)
-let Φ λx.pair (pair_second x) (succ (pair_second x))
-// Easy to define predecessor function using shift-and-increment
-let pred λn.pair_first (n Φ (pair 0 0))
-
-// A + B is A, with "succ" function applied B times
-let + λa.λb.((b succ) a)
-let - λa.λb.((b pred) a)
-
-let leq \a.\b.=0 (- a b)
-let =num \a.\b.(and (leq a b) (leq b a))
-
-assert (=num (succ (succ 0)) 2)
-assert (=num (2 succ 0) 2)
-
-assert (=num (pred 0) 0)
-assert (=num (pred 1) 0)
-assert (=num (pred 2) 1)
-
-
-// A * B is (+ A) function applied B times to 0
-let * λa.λb.((b (+ a)) 0)
-let double (* 2)
-
-// A ^ B is (* A) function applied B times to 1
-let ^ λa.λb.((b (* a)) 1)
-let square (^ 2)
-
-assert (=num (double 2) (square 2))
-
-let 4 (double 2)
-let 8 (double 4)
-let 16 (double 8)
-let 32 (double 16)
-let 64 (double 32)
-
-assert (=num ((+ ((+ 1) 2)) 1) 4)
-assert (=num ((+ ((+ 2) 4)) 2) 8)
-assert (=num ((+ ((+ 4) 8)) 4) 16)
-assert (=num (square 4) 16)
+```ocaml
+(**Option type **)
+let some #constructor 1 in
+let none  #constructor 0 in
+some 10
 ```
 
-## Recursion
-Achieving recursion proves Turing-completeness of the language.
-```js
-// The famous Y-combinator
-[let Y λf.
-    (λx.f (x x))
-    (λx.f (x x))]
+Constructors are lazy! They merely hold "pointers" to un-evaluated expressions that you passed in. Constructors are values (irreducible).
 
-[let fact Y λf.λn.
-    (=0 n)
-    1
-    (n | pred | f | (* n))]
+You can now use `#match` function, which takes the following parameters:
+ 1. Constructor - N-ary data constructor you want to match against
+ 2. Transform - N-ary function that would be called with unwrapped constructor arguments if the value matches
+ 3. Fallback - a function that takes value (**again**) if match did not happen
+ 4. Value - the actual value we are testing
 
-assert (=num (fact 4) (+ 16 8))
-// assert (=num (fact (succ 4)) (64 | (+ 32) | (+ 16) | (+ 8)))
+```ocaml
+#match
+    some
+    (\inner_value.inner_value + 1)
+    (\option.option)
+    (some 10)
 ```
 
-## Runtime
-Lambo has a built-in IO monad that describes side-effectful actions. From evaluator point of view, IOs are just values (aka irreducible expressions, aka normalized expressions).
+This syntax allows you to create something very similar to exhaustive pattern matching, if you combine it with pipes:
+```ocaml
+let unwrap_option
+  EXHAUSTED 
+    | #match none ERROR_EMPTY_OPTION
+    | #match some (\inner_value.inner_value)
+in
+
+unwrap_option 10
+```
+
+Which is the same as creating matcher for `some` and passing another `none`
+matcher as fallback, which in turn has `EXHAUSTED` as a fallback. `EXHAUSTED`
+here is just a free variable, but you can have anything there, e.g error
+reporting.
+
+#### Implementation note
+All built-in functions are `Data` nodes in disguise. E.g you can think of `+` as a
+reducible data constructor (in this case it's also strict - evaluation of both
+arguments is needed to advance evaluation).
+
+### Bytes
+Bytes is a primitive array of... bytes (u8). Parser would parse any `"quoted string"` as bytes.
+Bytes is immutable, so each time you try to modify it, a new `bytes` is created
+(although there are last-reference optimizations that would actually "move" the
+value and modify it under the hood, you **should not rely on it**).
+
+```ocaml
+let data "hello, world" in
+let empty #bytes_new 0 in
+
+let data_first 
+  data | #bytes_get 0
+in
+
+empty | push data_first
+```
+
+### IO
+Lambo has a built-in IO monad that describes side-effectful actions. From evaluator point of view, IOs is just Data.
 
 The sole purpose of Runtime is to **unwrap** the IO monad that you might constuct. This **unwrap** procedure is where all the fun happens. You can not invoke **unwrap** manually, only Runtime can.
 
 Lambo does not have types, but for a second let's imagine they exist. Runtime gives you the following tools for constructing and operating IO:
- - `#io_pure` of type `x -> IO`. A function that takes X and returns an IO monad. When Runtime unwraps this monad, program will return the contained value `x` without any side-effects.
- - `#io_print` of type `x -> IO`. A function that takes X and returns an IO monad. When Runtime unwraps this monad, program will print the contained value and return it.
- - `#io_throw` of type `x -> IO`. A function that takes X and returns an IO monad. When Runtime unwraps this monad, program will panic and print the thrown value.
- - `#io_read` of type `IO`. This is NOT a function, just an IO. When Runtime unwraps this monad, program will read a lambda expression from STDIN and return it.
- - `#io_flatmap` of type `IO -> ((x -> IO) -> IO)`. A function that takes two arguments: IO and a function `transform` that maps arbitrary value `x` to `IO`. The result is another IO. When Runtime unwraps this, it will unwrap the first IO, pass it's value to the transform function, and unwrap the final IO.
-
-Please note that before Runtime gets into play, evaluator will treat all these values just as any other variables.
-
-```js
-// Reads two expressions from STDIN and prints the result of equality check
-[let program #io_flatmap #io_read \x.
-            #io_flatmap #io_read \y.
-            (#io_print (= x y) )]
-
-// ^ program has "type" IO, meaning you can actually run it with all side effects
-
-// A funny one with recursion: keep reading from STDIN until the user inputs true
-[let program Y λf.
-    #io_flatmap #io_read λx.
-    (= true x)
-        (#io_pure DONE)
-        (#io_flatmap (#io_print PLEASE_GIVE_TRUE) (\_.f))]
-
-```
-
-## More monads: Option
-Option represents a potential absense of value.
-```js
-let some     λx.λs.λn.s x
-let none        λs.λn.n
-
-let option_flatmap   λoption.λtransform.option transform option
-let option_map       λoption.λtransform.option (λx.x | transform | some) option
-let option_or        λoption.λdefault.option some default 
-let option_unwrap    λoption.option id (#io_throw EMPTY_OPTION)
-let option_unwrap_or λoption.λdefault.option id default
-
-// These 2 are equivalent
-assert (=num (option_unwrap (option_map (some 2) double)) 4)
-assert (=num ((option_map (some 2) double) | option_unwrap) 4)
-
-assert (=num (option_unwrap (option_or none (some 1))) 1)
-assert (=num (option_unwrap (option_or (some 2) (some 1))) 2)
-
-assert (=num (option_unwrap_or none 2) 2)
-
-// This will panic: (option_unwrap none)
-```
-
-## Convenience: Streams and Folds
-The idea of `fold_stream` is to consume arbitrarily large stream of Options, accumulating the result. It's *not quite* the stream in usual sense, but you get the idea.
-
-Instead of writing `(+ (+ (+ 4 1) 2) 1)` we can be a bit more fancy: `stream_sum (some 4) (some 1) (some 2) (some 1) none`, and this can be generalized to other operations.
-```js
-
-// Keeps applying combine function until encounters first None. Returns accumulated result
-[let fold_stream λcombine.λinit.
-    (Y λf.λacc.λoption.
-        option (\x.(combine x acc) | f) acc
-    ) init]
-
-let stream_sum (fold_stream + 0)
-
-assert (=num (stream_sum none) 0)
-[assert (=num
-    (stream_sum (some 4) (some 1) (some 2) (some 1) none)
-    (4 | (+ 1) | (+ 2) | (+ 1))
-)]
-//                ^ real change of behavior                       ^ syntax sugar (x | f1 | f2) = (f2 (f1 x))
-```
-
-## Binary number constructor (wtf?)
-This is my in-house creation. Don't judge!
-
-Works very similar to fold_stream above, but with the help of the extra counter is able to decode binary numbers.
-Currently doesn't use Option to not clutter syntax too much. Ideally we would zip our stream of booleans with the stream of natural numbers, and then fold it easily.
-```js
-// Keeps accumulating boolean values until you give it END. Returns the number :)
-[let binary
-    with pow_2 λn.(n double 1) in
-    (Y λf.λi.λacc.λoption.
-        option
-        (\bool.
-            f 
-            (succ i) // increment i
-            (bool (+ acc (pow_2 i)) acc) // update acc
-        )
-        acc
-    )
-    0 0]
-
-[assert (=num
-    (binary (some true) (some false) (some true) (some true) none)
-    (1 | (+ 4) | (+ 8))
-)]
-```
+ - `#io_pure value` when unwrapped, returns `value` without any side effects
+ - `#io_print bytes` when unwrapped, prints the `bytes` and returns it
+ - `#io_read` when unwrapped, reads a line from STDIN and returns it as bytes
+ - `#io_flatmap transform io` when evaluated, unwraps the `io` and passes the returned value to `transform`
