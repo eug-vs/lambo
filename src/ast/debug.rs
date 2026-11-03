@@ -1,4 +1,4 @@
-use crate::ast::{DebugNode, Edge, Node, Primitive, VariableKind, AST};
+use crate::ast::{AST, DebugNode, Edge, Node, Primitive, VariableKind};
 
 impl AST {
     fn dot_node_with_attributes(
@@ -70,7 +70,8 @@ impl AST {
                     "{}",
                     Self::dot_node_with_attributes(
                         id,
-                        self.get_variable_name(node_id).unwrap(),
+                        self.get_variable_name(node_id)
+                            .unwrap_or(&String::from("PENDING_REMOVAL")),
                         match kind {
                             VariableKind::Bound => "gray",
                             VariableKind::Free(_) => "orange",

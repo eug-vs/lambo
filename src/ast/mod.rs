@@ -9,11 +9,11 @@ mod debug;
 pub mod preprocess;
 
 use petgraph::{
+    Direction,
     graph::{EdgeIndex, NodeIndex},
     prelude::StableGraph,
     stable_graph::EdgeReference,
     visit::EdgeRef,
-    Direction,
 };
 
 use crate::ast::builtins::ConstructorTag;
@@ -72,7 +72,6 @@ pub struct AST {
     pub graph: StableGraph<Node, Edge>,
     pub root: NodeIndex,
     next_uid: usize,
-    until_gc: usize,
 
     debug_frames: Vec<String>,
 }
@@ -88,8 +87,6 @@ pub enum ASTError {
 
 type ASTResult<T> = Result<T, ASTError>;
 
-const GC_INTERVAL: usize = 10_000;
-
 impl Default for AST {
     fn default() -> Self {
         Self::new()
@@ -102,7 +99,6 @@ impl AST {
             root: NodeIndex::default(),
             graph: StableGraph::new(),
             debug_frames: Vec::new(),
-            until_gc: GC_INTERVAL,
             next_uid: 0,
         }
     }
@@ -110,23 +106,6 @@ impl AST {
         let uid = self.next_uid;
         self.next_uid += 1;
         uid
-    }
-    fn maybe_gc(&mut self) {
-        if self.until_gc == 0 {
-            let (node_capacity, edge_capacity) = self.graph.capacity();
-            let nodes = self.graph.node_indices().count();
-            let edges = self.graph.edge_indices().count();
-
-            let node_ratio = nodes as f32 / node_capacity as f32;
-            let edge_ratio = edges as f32 / edge_capacity as f32;
-
-            if f32::max(node_ratio, edge_ratio) > 0.75 {
-                self.garbage_collect();
-            }
-
-            self.until_gc = GC_INTERVAL;
-        }
-        self.until_gc -= 1;
     }
     fn get_edge_ref<'a>(
         &'a self,
@@ -343,7 +322,6 @@ impl AST {
 
     /// Returns NodeIndex under the closure chain
     pub fn evaluate(&mut self, node_id: NodeIndex) -> Result<NodeIndex, ASTError> {
-        self.maybe_gc();
         self.add_debug_frame_with_annotation(node_id, "evaluate");
         match *self.graph.node_weight(node_id).unwrap() {
             Node::Closure { .. } => {
@@ -543,17 +521,40 @@ impl AST {
 
     #[tracing::instrument(skip(self))]
     fn remove_subtree(&mut self, node_id: NodeIndex) {
-        let children = self
-            .graph
-            .edges_directed(node_id, Direction::Outgoing)
-            .filter(|e| !matches!(e.weight(), Edge::Binder(_)))
-            .map(|e| e.target())
-            .collect::<Vec<_>>();
+        let (children, binders) = {
+            let (binder_edges, other_edges): (Vec<_>, Vec<_>) = self
+                .graph
+                .edges_directed(node_id, Direction::Outgoing)
+                .partition(|e| matches!(e.weight(), Edge::Binder(_)));
+
+            (
+                other_edges
+                    .into_iter()
+                    .map(|e| e.target())
+                    .collect::<Vec<_>>(),
+                binder_edges
+                    .into_iter()
+                    .map(|e| e.target())
+                    .collect::<Vec<_>>(),
+            )
+        };
+
+        self.graph.remove_node(node_id);
 
         for child in children {
             self.remove_subtree(child);
         }
-        self.graph.remove_node(node_id);
+
+        for binder in binders {
+            if let Node::Closure { .. } = self.graph.node_weight(binder).unwrap() {
+                // We've just removed a (potentially last) binder
+                if self.binder_references(binder).next().is_none() {
+                    self.add_debug_frame_with_annotation(binder, "GC: last referrer just removed");
+                    let parameter = self.remove_closure(binder).unwrap();
+                    self.remove_subtree(parameter);
+                }
+            }
+        }
     }
 
     /// Returns dangling parameter

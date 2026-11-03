@@ -103,7 +103,7 @@ impl HelperFunctionTag {
 
                     let head = *chain.first().unwrap();
                     ast.migrate_node(id, head);
-                    ast.graph.remove_node(id);
+                    ast.remove_subtree(id);
                     ast.evaluate(head)
                 } else {
                     // Call fallback function with value again
@@ -125,7 +125,7 @@ impl HelperFunctionTag {
                     ast.graph.add_edge(application, value, Edge::Parameter);
 
                     ast.migrate_node(id, application);
-                    ast.graph.remove_node(id);
+                    ast.remove_subtree(id);
                     ast.evaluate(application)
                 }
             }

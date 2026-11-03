@@ -42,7 +42,7 @@ fn main() {
             if let Err(err) = ast.evaluate(ast.root) {
                 ast.debug_ast_error(err)
             };
-            ast.garbage_collect();
+            assert_eq!(ast.garbage_collect(), 0, "Garbage is present in the resulting tree. Iterative GC has missed smth, investigate!");
 
             if let &Node::Data {
                 tag: ConstructorTag::IO(io),
