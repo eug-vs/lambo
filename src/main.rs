@@ -32,6 +32,7 @@ fn main() {
 
             let mut ast = AST::from_str(&input);
             ast.garbage_collect();
+            ast.lift_mfes();
             println!(" $\n{}", ast);
             ast.add_debug_frame();
 

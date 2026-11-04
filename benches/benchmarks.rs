@@ -9,6 +9,7 @@ fn benchmark_ast(benchmark_name: &str, input: usize) -> AST {
     let source = format!("{lib} {benchmark_name} {input}");
     let mut ast = AST::from_str(&source);
     ast.garbage_collect();
+    ast.lift_mfes();
     ast
 }
 
