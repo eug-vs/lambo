@@ -388,14 +388,46 @@ impl AST {
                             ast.evaluate(body)
                         };
 
-                        if self.binder_references(function).next().is_none() {
+                        fn is_under_lambda(
+                            ast: &AST,
+                            id: NodeIndex,
+                            root_lambda: NodeIndex,
+                        ) -> bool {
+                            let parent = ast
+                                .graph
+                                .edges_directed(id, Direction::Incoming)
+                                .find(|e| {
+                                    matches!(
+                                        e.weight(),
+                                        Edge::Parameter | Edge::Body | Edge::Function
+                                    )
+                                })
+                                .unwrap()
+                                .source();
+
+                            match ast.graph.node_weight(parent).unwrap() {
+                                Node::Lambda { .. } => parent != root_lambda,
+                                _ => is_under_lambda(ast, parent, root_lambda),
+                            }
+                        }
+
+                        let mut binder_refs = self
+                            .binder_references(function)
+                            .take(2)
+                            .collect::<Vec<_>>()
+                            .into_iter();
+
+                        let first_ref = binder_refs.next();
+
+                        if first_ref.is_none() {
                             // Function has no binders, parameter will be ignored!
                             self.add_debug_frame_with_annotation(
                                 function,
-                                "GC: Parameter is never used",
+                                "Cardinality/GC: Parameter is never used",
                             );
                             return skip_through(self);
                         }
+
                         if let Node::Variable(VariableKind::Bound) =
                             self.graph.node_weight(parameter).unwrap()
                         {
@@ -420,6 +452,32 @@ impl AST {
                             }
 
                             return skip_through(self);
+                        }
+                        if binder_refs.next().is_none() {
+                            let first_ref = first_ref.unwrap();
+                            // We have a single binder! Let's see if it's ever under a lambda
+                            if !is_under_lambda(self, first_ref, function)
+                                && matches!(
+                                    self.graph.node_weight(first_ref).unwrap(),
+                                    Node::Variable(_)
+                                )
+                            {
+                                // It's safe to perform direct substitution and avoid allocating a
+                                // closure becuase there's no danger of duplication
+                                self.add_debug_frame_with_annotation(
+                                    function,
+                                    "Cardinality: no danger of duplication, use direct substition",
+                                );
+
+                                self.migrate_node(first_ref, parameter);
+                                let body = self.follow_edge(function, Edge::Body)?;
+                                self.migrate_node(node_id, body);
+                                self.graph.remove_node(node_id);
+                                self.graph.remove_node(function);
+                                self.graph.remove_node(first_ref); // Variable no longer needed
+
+                                return self.evaluate(body);
+                            }
                         }
 
                         let argument_name = argument_name.clone();
