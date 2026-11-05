@@ -531,11 +531,11 @@ impl AST {
                 other_edges
                     .into_iter()
                     .map(|e| e.target())
-                    .collect::<Vec<_>>(),
+                    .collect::<HashSet<_>>(),
                 binder_edges
                     .into_iter()
                     .map(|e| e.target())
-                    .collect::<Vec<_>>(),
+                    .collect::<HashSet<_>>(),
             )
         };
 
