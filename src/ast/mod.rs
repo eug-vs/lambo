@@ -74,6 +74,7 @@ pub struct AST {
     next_uid: usize,
 
     debug_frames: Vec<String>,
+    pub debug: bool,
 }
 
 #[derive(Debug)]
@@ -100,6 +101,7 @@ impl AST {
             graph: StableGraph::new(),
             debug_frames: Vec::new(),
             next_uid: 0,
+            debug: false,
         }
     }
     fn next_uid(&mut self) -> usize {
@@ -551,16 +553,18 @@ impl AST {
 
 impl AST {
     pub fn add_debug_frame_with_annotation(&mut self, id: NodeIndex, text: &str) {
-        let node = self.graph.add_node(Node::Debug(DebugNode::Annotation {
-            text: text.to_string(),
-        }));
-        let edge = self.graph.add_edge(node, id, Edge::Debug);
-        self.add_debug_frame();
-        self.graph.remove_node(node);
-        self.graph.remove_edge(edge);
+        if self.debug {
+            let node = self.graph.add_node(Node::Debug(DebugNode::Annotation {
+                text: text.to_string(),
+            }));
+            let edge = self.graph.add_edge(node, id, Edge::Debug);
+            self.add_debug_frame();
+            self.graph.remove_node(node);
+            self.graph.remove_edge(edge);
+        }
     }
     pub fn add_debug_frame(&mut self) {
-        if false {
+        if self.debug {
             self.debug_frames.push(self.to_dot());
         }
     }

@@ -1,5 +1,6 @@
 use lambo::ast::{AST, Node, builtins::ConstructorTag};
 use std::{
+    env,
     io::{Read, stdin},
     thread,
 };
@@ -32,6 +33,15 @@ fn main() {
 
             let mut ast = AST::from_str(&input);
             ast.garbage_collect();
+
+            ast.debug = env::var("LAMBO_DEBUG")
+                .inspect(|v|  {
+                    println!("LAMBO_DEBUG={}", v);
+                    println!("Enabling debug frame writing");
+                    println!();
+                })
+                .is_ok();
+
             ast.lift_mfes();
             println!(" $\n{}", ast);
             ast.add_debug_frame();

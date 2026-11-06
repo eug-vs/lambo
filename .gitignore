@@ -3,3 +3,4 @@ debug
 error
 flamegraph*
 perf.data*
+*.dot

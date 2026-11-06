@@ -1,4 +1,4 @@
-use crate::ast::{AST, DebugNode, Edge, Node, Primitive, VariableKind};
+use crate::ast::{AST, DebugNode, Edge, Node, Primitive, VariableKind, builtins::ConstructorTag};
 
 impl AST {
     fn dot_node_with_attributes(
@@ -6,8 +6,13 @@ impl AST {
         label: &str,
         color: &'static str,
         font_color: &'static str,
+        tooltip: Option<&str>,
     ) -> String {
-        format!("{id} [label=\"{label}\" style=filled fillcolor={color} fontcolor={font_color}]")
+        let id = id.to_string();
+        let tooltip = tooltip.unwrap_or(&id);
+        format!(
+            "{id} [label=\"{label}\" style=filled fillcolor={color} fontcolor={font_color} tooltip=\"{tooltip}\"]"
+        )
     }
     /// Convert current Graph state into String in DOT format.
     /// This can be then rendered using graphviz into PNG/SVG for analysis and debugging.
@@ -28,7 +33,8 @@ impl AST {
                         id,
                         &format!("λ{argument_name}"),
                         "green",
-                        "white"
+                        "white",
+                        None
                     )
                 )
                 .unwrap(),
@@ -40,7 +46,8 @@ impl AST {
                             id,
                             &format!("let {argument_name} in"),
                             "red",
-                            "white"
+                            "white",
+                            None
                         )
                     )
                     .unwrap();
@@ -55,7 +62,13 @@ impl AST {
                     writeln!(
                         result,
                         "{}",
-                        Self::dot_node_with_attributes(id, &"call".to_string(), "blue", "white")
+                        Self::dot_node_with_attributes(
+                            id,
+                            &"call".to_string(),
+                            "blue",
+                            "white",
+                            None
+                        )
                     )
                     .unwrap();
                     let parameter = self.follow_edge(node_id, Edge::Parameter).unwrap().index();
@@ -76,15 +89,40 @@ impl AST {
                             VariableKind::Bound => "gray",
                             VariableKind::Free(_) => "orange",
                         },
-                        "white"
+                        "white",
+                        self.follow_edge(node_id, Edge::Binder(0))
+                            .map(|binder| format!("Bound to {}", binder.index()))
+                            .ok()
+                            .as_deref()
                     )
                 )
                 .unwrap(),
                 Node::Data { tag } => {
+                    let binders = ConstructorTag::get_binders(self, node_id);
+                    let argument_names = tag.argument_names();
+
                     writeln!(
                         result,
-                        "{id} [label=\"{id}: Data {}\"]",
-                        String::try_from(*tag).unwrap()
+                        "{}",
+                        Self::dot_node_with_attributes(
+                            id,
+                            &format!(
+                                "Data {} ({}/{})",
+                                String::from(*tag),
+                                binders.len(),
+                                argument_names.len(),
+                            ),
+                            "yellow",
+                            "black",
+                            Some(
+                                &binders
+                                    .into_iter()
+                                    .zip(argument_names)
+                                    .map(|(binder, name)| format!("{}: {}", name, binder.index()))
+                                    .collect::<Vec<_>>()
+                                    .join("\n")
+                            )
+                        )
                     )
                     .unwrap();
                 }
@@ -94,11 +132,9 @@ impl AST {
                     str::from_utf8(bytes).unwrap()
                 )
                 .unwrap(),
-                Node::Primitive(value) => {
-                    writeln!(result, "{id} [label=\"{id}: {:?}\"]", value).unwrap()
-                }
+                Node::Primitive(value) => writeln!(result, "{id} [label=\"{:?}\"]", value).unwrap(),
                 Node::Debug(DebugNode::Annotation { text }) => {
-                    writeln!(result, "{id} [label=\"{id}: {text}\", color=\"red\"]",).unwrap()
+                    writeln!(result, "{id} [label=\"{text}\", color=\"red\"]",).unwrap()
                 }
             }
         }

@@ -84,7 +84,7 @@ impl ConstructorTag {
         }
     }
 
-    pub fn get_binders(ast: &mut AST, id: NodeIndex) -> Vec<NodeIndex> {
+    pub fn get_binders(ast: &AST, id: NodeIndex) -> Vec<NodeIndex> {
         let mut edges = ast
             .graph
             .edges_directed(id, petgraph::Direction::Outgoing)
