@@ -9,7 +9,7 @@ pub enum Token {
     Lambda,
     Dot,
     Pipe,
-    With,
+    Let { recursive: bool },
     In,
     Colon,
     Eof,
@@ -91,7 +91,8 @@ pub fn lexer(input: &str) -> impl Iterator<Item = Token> {
         }
     })
     .map(|token| match token {
-        Token::Symbol(name) if name == "with" || name == "let" => Token::With,
+        Token::Symbol(name) if name == "with" || name == "let" => Token::Let { recursive: false },
+        Token::Symbol(name) if name == "letrec" => Token::Let { recursive: true },
         Token::Symbol(name) if name == "in" => Token::In,
         _ => token,
     })

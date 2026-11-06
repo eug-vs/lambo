@@ -100,19 +100,24 @@ pub fn parse_expr<I: Iterator<Item = Token>>(
             }
             result
         }
-        Token::With => {
+        Token::Let { recursive } => {
             let variable_name = match tokens.next() {
                 Some(Token::Symbol(name)) => name,
                 token => panic!("Expected variable name, got: {:?}", token),
             };
+            let closure_node = ast.graph.add_node(Node::Closure {
+                argument_name: Rc::new(variable_name),
+            });
+
+            if recursive {
+                binder_ctx.push(closure_node);
+            }
+
             let value = parse_expr(ast, tokens, 0, binder_ctx.clone());
             match tokens.next() {
                 Some(Token::In) => {}
                 token => panic!("Expected In, got: {:?}", token),
             };
-            let closure_node = ast.graph.add_node(Node::Closure {
-                argument_name: Rc::new(variable_name),
-            });
 
             binder_ctx.push(closure_node);
             let body = parse_expr(ast, tokens, 0, binder_ctx.clone());
