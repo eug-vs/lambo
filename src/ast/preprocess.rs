@@ -73,7 +73,7 @@ impl AST {
         let current_node = self.graph.node_weight(node_id).unwrap();
 
         let local_blacklist = match current_node {
-            Node::Variable(VariableKind::Bound) => {
+            Node::Variable(VariableKind::Bound) | Node::Data { .. } => {
                 return (
                     [].into(),
                     [node_id].into(), // Single variable
