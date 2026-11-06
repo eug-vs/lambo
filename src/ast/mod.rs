@@ -604,7 +604,7 @@ impl AST {
         }
 
         for binder in binders {
-            if let Node::Closure { .. } = self.graph.node_weight(binder).unwrap() {
+            if let Some(Node::Closure { .. }) = self.graph.node_weight(binder) {
                 // We've just removed a (potentially last) binder
                 if self.binder_references(binder).next().is_none() {
                     self.add_debug_frame_with_annotation(binder, "GC: last referrer just removed");
