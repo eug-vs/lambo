@@ -6,7 +6,7 @@ pub enum Token {
     Quoted(String),
     OpenParen,
     CloseParen,
-    Lambda,
+    Lambda { asserted_strict: bool },
     Dot,
     Pipe,
     Let { recursive: bool },
@@ -19,7 +19,12 @@ fn match_single_char_token(c: char) -> Option<Token> {
     match c {
         '(' => Some(Token::OpenParen),
         ')' => Some(Token::CloseParen),
-        'λ' | '@' | '\\' => Some(Token::Lambda),
+        'λ' | '\\' => Some(Token::Lambda {
+            asserted_strict: false,
+        }),
+        '@' => Some(Token::Lambda {
+            asserted_strict: true,
+        }),
         '.' => Some(Token::Dot),
         '|' => Some(Token::Pipe),
         ':' => Some(Token::Colon),

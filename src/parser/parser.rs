@@ -3,7 +3,7 @@ use std::{iter::Peekable, panic, rc::Rc};
 use petgraph::graph::NodeIndex;
 
 use crate::{
-    ast::{builtins::ConstructorTag, Edge, Node, Primitive, VariableKind, AST},
+    ast::{AST, Edge, Node, Primitive, VariableKind, builtins::ConstructorTag},
     parser::lexer::Token,
 };
 
@@ -51,7 +51,7 @@ pub fn parse_expr<I: Iterator<Item = Token>>(
                 }
             }
         }
-        Token::Lambda => {
+        Token::Lambda { .. } => {
             // Support nested syntax: \x y z.x y z
             let mut lambdas_chain = vec![];
             while let Some(Token::Symbol(_)) = tokens.peek() {
